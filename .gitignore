@@ -1,0 +1,5 @@
+data/
+visuals/
+__pycache__/
+.venv
+*.npy

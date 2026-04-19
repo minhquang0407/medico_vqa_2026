@@ -1,0 +1,23 @@
+# Deep Learning Core
+torch>=2.0.0
+torchvision
+transformers
+bitsandbytes
+peft
+accelerate
+
+# Math & Topology (Role 1)
+giotto-tda
+pot             # Python Optimal Transport (thư viện chuẩn cho Sinkhorn)
+numpy
+scipy
+
+# Computer Vision & Augmentation (Role 1)
+albumentations
+opencv-python
+Pillow
+matplotlib
+
+# Data handling
+pandas
+tqdm
