@@ -9,7 +9,7 @@ accelerate
 # Math & Topology (Role 1)
 giotto-tda
 pot             # Python Optimal Transport (thư viện chuẩn cho Sinkhorn)
-numpy
+numpy<2.0.0
 scipy
 
 # Computer Vision & Augmentation (Role 1)
