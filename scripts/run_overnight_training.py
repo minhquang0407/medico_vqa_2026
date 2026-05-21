@@ -24,6 +24,21 @@ A0_NO_OT = {
     "ot_loss_weight": 0.05,
 }
 
+A3B_PRIOR_OT_FUSION_NO_OT_LOSS = {
+    "name": "A3b_prior_ot_fusion_no_ot_loss",
+    "use_ot": True,
+    "use_ot_fusion": True,
+    "use_prior_as_ot_target": True,
+    "ot_loss_weight": 0.0,
+}
+
+A3_PRIOR_OT_FUSION_LORA16 = {
+    **A3_PRIOR_OT_FUSION,
+    "name": "A3_prior_ot_fusion_lora16",
+    "lora_r": 16,
+    "lora_alpha": 32,
+}
+
 
 def str2bool(value):
     if isinstance(value, bool):
@@ -146,9 +161,9 @@ def train_command(args, cfg, output_dir: Path, max_samples, epochs):
         "--use-lora",
         "true",
         "--lora-r",
-        str(args.lora_r),
+        str(cfg.get("lora_r", args.lora_r)),
         "--lora-alpha",
-        str(args.lora_alpha),
+        str(cfg.get("lora_alpha", args.lora_alpha)),
         "--lora-dropout",
         str(args.lora_dropout),
         "--lora-target-modules",
@@ -251,6 +266,12 @@ def make_markdown_report(summary, report_path: Path):
 def selected_configs(plan):
     if plan == "best_only":
         return [A3_PRIOR_OT_FUSION]
+    if plan == "a3b_only":
+        return [A3B_PRIOR_OT_FUSION_NO_OT_LOSS]
+    if plan == "a3_lora16_only":
+        return [A3_PRIOR_OT_FUSION_LORA16]
+    if plan == "option_a_b":
+        return [A3B_PRIOR_OT_FUSION_NO_OT_LOSS, A3_PRIOR_OT_FUSION_LORA16]
     if plan == "compare_a0_a3":
         return [A0_NO_OT, A3_PRIOR_OT_FUSION]
     raise ValueError(f"Unknown plan: {plan}")
@@ -283,7 +304,11 @@ def main():
     parser = argparse.ArgumentParser(
         description="One-command overnight runner: train 10k -> eval, then full data -> eval."
     )
-    parser.add_argument("--plan", choices=["best_only", "compare_a0_a3"], default="best_only")
+    parser.add_argument(
+        "--plan",
+        choices=["best_only", "compare_a0_a3", "a3b_only", "a3_lora16_only", "option_a_b"],
+        default="best_only",
+    )
     parser.add_argument("--stage", choices=["all", "tenk", "full"], default="all")
     parser.add_argument("--run-prefix", default="overnight_qwen3b_a3_10k_then_full")
     parser.add_argument("--output-root", default="checkpoints")
