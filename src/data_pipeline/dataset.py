@@ -1,7 +1,7 @@
 import csv
 import json
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -52,6 +52,12 @@ def get_image_ref(record: Dict[str, Any]) -> str:
     return ""
 
 
+def path_basename_any(value: str | Path) -> str:
+    """Return filename for both POSIX paths and Windows paths on any OS."""
+    text = str(value)
+    return Path(PureWindowsPath(text).name).name
+
+
 def resolve_image_path(image_ref: str, images_dir: Optional[str | Path] = None) -> Path:
     if not image_ref:
         raise ValueError("Record không có field images hợp lệ.")
@@ -62,12 +68,14 @@ def resolve_image_path(image_ref: str, images_dir: Optional[str | Path] = None) 
 
     if images_dir is not None:
         images_dir = Path(images_dir)
-        candidate = images_dir / image_ref_path.name
+        image_name = path_basename_any(image_ref)
+        image_stem = Path(image_name).stem
+        candidate = images_dir / image_name
         if candidate.exists():
             return candidate
 
         for ext in IMAGE_EXTENSIONS:
-            candidate = images_dir / f"{image_ref_path.stem}{ext}"
+            candidate = images_dir / f"{image_stem}{ext}"
             if candidate.exists():
                 return candidate
 
@@ -198,16 +206,20 @@ class StructuralFeatureIndex:
                     continue
 
                 cache = Path(cache_path)
+                if not cache.exists():
+                    remapped_cache = manifest_csv.parent / path_basename_any(cache_path)
+                    if remapped_cache.exists():
+                        cache = remapped_cache
                 image_ref = row.get("image_ref", "")
                 image_path = row.get("image_path", "")
 
                 self.rows.append(row)
                 if image_ref:
                     self.by_image_ref[self._norm_key(image_ref)] = cache
-                    self.by_basename[Path(image_ref).name.lower()] = cache
+                    self.by_basename[path_basename_any(image_ref).lower()] = cache
                 if image_path:
                     self.by_image_path[self._norm_key(image_path)] = cache
-                    self.by_basename[Path(image_path).name.lower()] = cache
+                    self.by_basename[path_basename_any(image_path).lower()] = cache
 
     @staticmethod
     def _norm_key(value: str | Path) -> str:
@@ -217,8 +229,8 @@ class StructuralFeatureIndex:
         candidates = [
             self.by_image_ref.get(self._norm_key(image_ref)),
             self.by_image_path.get(self._norm_key(image_path)),
-            self.by_basename.get(Path(image_ref).name.lower()),
-            self.by_basename.get(Path(image_path).name.lower()),
+            self.by_basename.get(path_basename_any(image_ref).lower()),
+            self.by_basename.get(path_basename_any(image_path).lower()),
         ]
         for candidate in candidates:
             if candidate is not None:
