@@ -1,5 +1,49 @@
+# Data and generated artifacts
 data/
+checkpoints/
+eval/
+logs/
 visuals/
+
+# Python
 __pycache__/
-.venv
+*.py[cod]
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Large model/data files
 *.npy
+*.npz
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.bin
+*.onnx
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+
+# Local IDE / OS files
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Generated media/debug outputs
+*.png
+*.jpg
+*.jpeg
+*.webp
+*.mp4
+*.avi

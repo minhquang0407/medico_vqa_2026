@@ -11,6 +11,7 @@ giotto-tda
 pot             # Python Optimal Transport (thư viện chuẩn cho Sinkhorn)
 numpy
 scipy
+scikit-learn
 
 # Computer Vision & Augmentation (Role 1)
 albumentations
