@@ -361,6 +361,7 @@ def main():
         print(f"GEN: {preview['generated']}")
         print("--------------------------------------\n")
 
+        save_checkpoint(output_dir / f"epoch_{epoch}.pt", model, optimizer, epoch, row, args)
         save_checkpoint(output_dir / "last.pt", model, optimizer, epoch, row, args)
 
     model.tokenizer.save_pretrained(output_dir / "tokenizer")
