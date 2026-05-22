@@ -82,6 +82,8 @@ def run_command(command, log_file: Path, *, quiet: bool = True, progress_interva
     env = os.environ.copy()
     env.setdefault("PYTHONIOENCODING", "utf-8")
     env.setdefault("PYTHONUTF8", "1")
+    if quiet:
+        env["DISABLE_TQDM"] = "1"
     process = subprocess.Popen(
         command,
         stdout=subprocess.PIPE,

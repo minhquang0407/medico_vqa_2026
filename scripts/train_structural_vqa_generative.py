@@ -1,6 +1,7 @@
 import argparse
 import json
 import math
+import os
 import random
 import time
 from pathlib import Path
@@ -88,7 +89,7 @@ def current_lr(optimizer):
     return float(optimizer.param_groups[0]["lr"])
 
 
-def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_accumulation_steps=1, scheduler=None):
+def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_accumulation_steps=1, scheduler=None, disable_tqdm=False):
     model.train(train)
     totals = {
         "loss": 0.0,
@@ -101,7 +102,7 @@ def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_
     }
     steps = 0
     desc = f"Train epoch {epoch}" if train else f"Eval epoch {epoch}"
-    iterator = tqdm(dataloader, desc=desc)
+    iterator = tqdm(dataloader, desc=desc, disable=disable_tqdm)
 
     for batch in iterator:
         batch = batch_to_device(batch, device)
@@ -130,7 +131,8 @@ def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_
         for key, value in step_values.items():
             totals[key] += value
         steps += 1
-        iterator.set_postfix(loss=step_values["loss"], lm=step_values["lm_loss"], lr=current_lr(optimizer))
+        if not disable_tqdm:
+            iterator.set_postfix(loss=step_values["loss"], lm=step_values["lm_loss"], lr=current_lr(optimizer))
 
     if train and steps % gradient_accumulation_steps != 0:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -240,6 +242,7 @@ def main():
     parser.add_argument("--use-prior-align-loss", type=str2bool, default=True)
     parser.add_argument("--use-global-topo-loss", type=str2bool, default=True)
     parser.add_argument("--use-patch-topo-loss", type=str2bool, default=False)
+    parser.add_argument("--disable-tqdm", type=str2bool, default=False)
     parser.add_argument("--prior-loss-weight", type=float, default=0.05)
     parser.add_argument("--global-topo-loss-weight", type=float, default=0.01)
     parser.add_argument("--lr-scheduler", default="none", choices=["none", "linear", "cosine"])
@@ -331,6 +334,8 @@ def main():
     print(f"LR scheduler: {args.lr_scheduler} | warmup_steps={args.warmup_steps} | total_update_steps={total_update_steps}")
     optimizer.zero_grad(set_to_none=True)
 
+    disable_tqdm = bool(args.disable_tqdm) or os.environ.get("DISABLE_TQDM", "").lower() in {"1", "true", "yes", "y"}
+
     for epoch in range(1, args.epochs + 1):
         start = time.time()
         train_metrics = run_epoch(
@@ -342,8 +347,9 @@ def main():
             train=True,
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             scheduler=scheduler,
+            disable_tqdm=disable_tqdm,
         )
-        val_metrics = run_epoch(model, val_loader, optimizer, device, epoch, train=False) if val_loader is not None else {}
+        val_metrics = run_epoch(model, val_loader, optimizer, device, epoch, train=False, disable_tqdm=disable_tqdm) if val_loader is not None else {}
         preview = preview_generation(model, train_loader, device)
         elapsed = time.time() - start
         row = {"epoch": epoch, "elapsed_sec": elapsed, "train": train_metrics, "val": val_metrics, "preview": preview, "args": vars(args)}
