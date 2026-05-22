@@ -20,7 +20,55 @@ def timestamp():
     return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
-def run_command(command, log_file: Path):
+def should_echo_line(line: str, *, quiet: bool, last_progress_time: list[float], progress_interval_sec: int) -> bool:
+    if not quiet:
+        return True
+
+    stripped = line.lstrip("\r").strip()
+    if not stripped:
+        return False
+
+    important_prefixes = (
+        "===",
+        "---",
+        "Device:",
+        "LLM:",
+        "Max samples:",
+        "Freeze LLM:",
+        "LR scheduler:",
+        "trainable params:",
+        "Epoch ",
+        "Train:",
+        "Val:",
+        "Preview:",
+        "Q:",
+        "GT:",
+        "GEN:",
+        "✅",
+        "❌",
+        "⚠️",
+        "Warning:",
+        "Traceback",
+        "RuntimeError",
+        "FileNotFoundError",
+        "ImportError",
+        "{",
+        "}",
+        '"',
+    )
+    if stripped.startswith(important_prefixes):
+        return True
+
+    is_progress = stripped.startswith(("Train epoch ", "Evaluating:", "Loading weights:"))
+    if is_progress:
+        now = dt.datetime.now().timestamp()
+        if now - last_progress_time[0] >= progress_interval_sec or "100%" in stripped:
+            last_progress_time[0] = now
+            return True
+    return False
+
+
+def run_command(command, log_file: Path, *, quiet: bool = True, progress_interval_sec: int = 300):
     printable = " ".join(map(str, command))
     print("\n" + "=" * 120)
     print(printable)
@@ -44,9 +92,11 @@ def run_command(command, log_file: Path):
         env=env,
         bufsize=1,
     )
+    last_progress_time = [0.0]
     with log_file.open("a", encoding="utf-8") as f:
         for line in process.stdout:
-            print(line, end="")
+            if should_echo_line(line, quiet=quiet, last_progress_time=last_progress_time, progress_interval_sec=progress_interval_sec):
+                print(line, end="")
             f.write(line)
     code = process.wait()
     if code != 0:
@@ -201,6 +251,8 @@ def main():
     parser.add_argument("--eval-root", default="eval")
     parser.add_argument("--log-dir", default="logs/overnight")
     parser.add_argument("--backup-dir", default=None, help="Optional Drive directory to copy checkpoints/eval/logs after completion.")
+    parser.add_argument("--quiet", default="true", choices=["true", "false"], help="Reduce child-process console output; full logs are still written to file.")
+    parser.add_argument("--progress-interval-sec", type=int, default=300, help="When quiet=true, print progress lines at most once per this many seconds.")
 
     parser.add_argument("--train-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-train.jsonl")
     parser.add_argument("--test-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-test.jsonl")
@@ -249,14 +301,16 @@ def main():
 
     summary = {"run_id": run_id, "args": vars(args), "checkpoint_dir": str(checkpoint_dir), "epochs": []}
 
-    run_command(train_command(args, checkpoint_dir), log_file)
+    quiet = args.quiet.lower() == "true"
+
+    run_command(train_command(args, checkpoint_dir), log_file, quiet=quiet, progress_interval_sec=args.progress_interval_sec)
 
     for epoch in range(1, args.epochs + 1):
         checkpoint_path = checkpoint_dir / f"epoch_{epoch}.pt"
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Missing epoch checkpoint: {checkpoint_path}")
         eval_dir = Path(args.eval_root) / f"{run_id}_epoch_{epoch}_test{args.eval_samples or 'full'}"
-        run_command(eval_command(args, checkpoint_path, eval_dir), log_file)
+        run_command(eval_command(args, checkpoint_path, eval_dir), log_file, quiet=quiet, progress_interval_sec=args.progress_interval_sec)
         item = {
             "epoch": epoch,
             "checkpoint": str(checkpoint_path),
