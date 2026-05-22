@@ -33,6 +33,7 @@ env/
 *.hdf5
 *.pkl
 *.pickle
+*.zip
 
 # Local IDE / OS files
 .idea/
