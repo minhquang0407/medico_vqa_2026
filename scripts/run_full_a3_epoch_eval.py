@@ -181,6 +181,10 @@ def train_command(args, checkpoint_dir: Path):
         str(args.warmup_steps),
         "--use-patch-topo-loss",
         "false",
+        "--log-every-steps",
+        str(args.log_every_steps),
+        "--log-every-seconds",
+        str(args.log_every_seconds),
     ]
     if args.max_samples and args.max_samples > 0:
         command.extend(["--max-samples", str(args.max_samples)])
@@ -255,6 +259,8 @@ def main():
     parser.add_argument("--backup-dir", default=None, help="Optional Drive directory to copy checkpoints/eval/logs after completion.")
     parser.add_argument("--quiet", default="true", choices=["true", "false"], help="Reduce child-process console output; full logs are still written to file.")
     parser.add_argument("--progress-interval-sec", type=int, default=300, help="When quiet=true, print progress lines at most once per this many seconds.")
+    parser.add_argument("--log-every-steps", type=int, default=5000, help="Training progress line interval when tqdm is disabled.")
+    parser.add_argument("--log-every-seconds", type=int, default=600, help="Training progress time interval when tqdm is disabled.")
 
     parser.add_argument("--train-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-train.jsonl")
     parser.add_argument("--test-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-test.jsonl")

@@ -89,7 +89,19 @@ def current_lr(optimizer):
     return float(optimizer.param_groups[0]["lr"])
 
 
-def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_accumulation_steps=1, scheduler=None, disable_tqdm=False):
+def run_epoch(
+    model,
+    dataloader,
+    optimizer,
+    device,
+    epoch,
+    train=True,
+    gradient_accumulation_steps=1,
+    scheduler=None,
+    disable_tqdm=False,
+    log_every_steps=5000,
+    log_every_seconds=600,
+):
     model.train(train)
     totals = {
         "loss": 0.0,
@@ -103,6 +115,9 @@ def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_
     steps = 0
     desc = f"Train epoch {epoch}" if train else f"Eval epoch {epoch}"
     iterator = tqdm(dataloader, desc=desc, disable=disable_tqdm)
+    total_steps = len(dataloader) if hasattr(dataloader, "__len__") else None
+    epoch_start = time.time()
+    last_log_time = epoch_start
 
     for batch in iterator:
         batch = batch_to_device(batch, device)
@@ -133,6 +148,31 @@ def run_epoch(model, dataloader, optimizer, device, epoch, train=True, gradient_
         steps += 1
         if not disable_tqdm:
             iterator.set_postfix(loss=step_values["loss"], lm=step_values["lm_loss"], lr=current_lr(optimizer))
+        else:
+            now = time.time()
+            should_log_step = log_every_steps > 0 and steps % log_every_steps == 0
+            should_log_time = log_every_seconds > 0 and now - last_log_time >= log_every_seconds
+            is_last_step = total_steps is not None and steps >= total_steps
+            if should_log_step or should_log_time or is_last_step:
+                elapsed = now - epoch_start
+                rate = steps / max(elapsed, 1e-6)
+                if total_steps:
+                    progress = 100.0 * steps / max(total_steps, 1)
+                    remaining = max(total_steps - steps, 0)
+                    eta_sec = remaining / max(rate, 1e-6)
+                    eta = f"{eta_sec / 3600:.2f}h"
+                    total_text = str(total_steps)
+                else:
+                    progress = 0.0
+                    eta = "?"
+                    total_text = "?"
+                print(
+                    f"[{desc}] step {steps}/{total_text} | {progress:.1f}% | "
+                    f"loss={step_values['loss']:.4f} | lm={step_values['lm_loss']:.4f} | "
+                    f"lr={current_lr(optimizer):.3g} | elapsed={elapsed / 3600:.2f}h | eta={eta}",
+                    flush=True,
+                )
+                last_log_time = now
 
     if train and steps % gradient_accumulation_steps != 0:
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -243,6 +283,8 @@ def main():
     parser.add_argument("--use-global-topo-loss", type=str2bool, default=True)
     parser.add_argument("--use-patch-topo-loss", type=str2bool, default=False)
     parser.add_argument("--disable-tqdm", type=str2bool, default=False)
+    parser.add_argument("--log-every-steps", type=int, default=5000)
+    parser.add_argument("--log-every-seconds", type=int, default=600)
     parser.add_argument("--prior-loss-weight", type=float, default=0.05)
     parser.add_argument("--global-topo-loss-weight", type=float, default=0.01)
     parser.add_argument("--lr-scheduler", default="none", choices=["none", "linear", "cosine"])
@@ -348,8 +390,24 @@ def main():
             gradient_accumulation_steps=args.gradient_accumulation_steps,
             scheduler=scheduler,
             disable_tqdm=disable_tqdm,
+            log_every_steps=args.log_every_steps,
+            log_every_seconds=args.log_every_seconds,
         )
-        val_metrics = run_epoch(model, val_loader, optimizer, device, epoch, train=False, disable_tqdm=disable_tqdm) if val_loader is not None else {}
+        val_metrics = (
+            run_epoch(
+                model,
+                val_loader,
+                optimizer,
+                device,
+                epoch,
+                train=False,
+                disable_tqdm=disable_tqdm,
+                log_every_steps=args.log_every_steps,
+                log_every_seconds=args.log_every_seconds,
+            )
+            if val_loader is not None
+            else {}
+        )
         preview = preview_generation(model, train_loader, device)
         elapsed = time.time() - start
         row = {"epoch": epoch, "elapsed_sec": elapsed, "train": train_metrics, "val": val_metrics, "preview": preview, "args": vars(args)}
