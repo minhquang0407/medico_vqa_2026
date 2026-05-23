@@ -101,6 +101,8 @@ def run_epoch(
     disable_tqdm=False,
     log_every_steps=5000,
     log_every_seconds=600,
+    tqdm_mininterval=60,
+    tqdm_miniters=1000,
 ):
     model.train(train)
     totals = {
@@ -114,10 +116,18 @@ def run_epoch(
     }
     steps = 0
     desc = f"Train epoch {epoch}" if train else f"Eval epoch {epoch}"
-    iterator = tqdm(dataloader, desc=desc, disable=disable_tqdm)
+    iterator = tqdm(
+        dataloader,
+        desc=desc,
+        disable=disable_tqdm,
+        mininterval=max(float(tqdm_mininterval), 0.0),
+        miniters=max(int(tqdm_miniters), 1),
+        dynamic_ncols=False,
+    )
     total_steps = len(dataloader) if hasattr(dataloader, "__len__") else None
     epoch_start = time.time()
     last_log_time = epoch_start
+    last_tqdm_postfix_time = epoch_start
 
     for batch in iterator:
         batch = batch_to_device(batch, device)
@@ -147,7 +157,15 @@ def run_epoch(
             totals[key] += value
         steps += 1
         if not disable_tqdm:
-            iterator.set_postfix(loss=step_values["loss"], lm=step_values["lm_loss"], lr=current_lr(optimizer))
+            now = time.time()
+            should_update_postfix = (
+                (log_every_steps > 0 and steps % log_every_steps == 0)
+                or (log_every_seconds > 0 and now - last_tqdm_postfix_time >= log_every_seconds)
+                or (total_steps is not None and steps >= total_steps)
+            )
+            if should_update_postfix:
+                iterator.set_postfix(loss=step_values["loss"], lm=step_values["lm_loss"], lr=current_lr(optimizer), refresh=False)
+                last_tqdm_postfix_time = now
         else:
             now = time.time()
             should_log_step = log_every_steps > 0 and steps % log_every_steps == 0
@@ -285,6 +303,8 @@ def main():
     parser.add_argument("--disable-tqdm", type=str2bool, default=False)
     parser.add_argument("--log-every-steps", type=int, default=5000)
     parser.add_argument("--log-every-seconds", type=int, default=600)
+    parser.add_argument("--tqdm-mininterval", type=float, default=60.0)
+    parser.add_argument("--tqdm-miniters", type=int, default=1000)
     parser.add_argument("--prior-loss-weight", type=float, default=0.05)
     parser.add_argument("--global-topo-loss-weight", type=float, default=0.01)
     parser.add_argument("--lr-scheduler", default="none", choices=["none", "linear", "cosine"])
@@ -392,6 +412,8 @@ def main():
             disable_tqdm=disable_tqdm,
             log_every_steps=args.log_every_steps,
             log_every_seconds=args.log_every_seconds,
+            tqdm_mininterval=args.tqdm_mininterval,
+            tqdm_miniters=args.tqdm_miniters,
         )
         val_metrics = (
             run_epoch(
@@ -404,6 +426,8 @@ def main():
                 disable_tqdm=disable_tqdm,
                 log_every_steps=args.log_every_steps,
                 log_every_seconds=args.log_every_seconds,
+                tqdm_mininterval=args.tqdm_mininterval,
+                tqdm_miniters=args.tqdm_miniters,
             )
             if val_loader is not None
             else {}

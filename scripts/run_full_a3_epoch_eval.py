@@ -185,6 +185,10 @@ def train_command(args, checkpoint_dir: Path):
         str(args.log_every_steps),
         "--log-every-seconds",
         str(args.log_every_seconds),
+        "--tqdm-mininterval",
+        str(args.tqdm_mininterval),
+        "--tqdm-miniters",
+        str(args.tqdm_miniters),
     ]
     if args.max_samples and args.max_samples > 0:
         command.extend(["--max-samples", str(args.max_samples)])
@@ -261,6 +265,8 @@ def main():
     parser.add_argument("--progress-interval-sec", type=int, default=300, help="When quiet=true, print progress lines at most once per this many seconds.")
     parser.add_argument("--log-every-steps", type=int, default=5000, help="Training progress line interval when tqdm is disabled.")
     parser.add_argument("--log-every-seconds", type=int, default=600, help="Training progress time interval when tqdm is disabled.")
+    parser.add_argument("--tqdm-mininterval", type=float, default=60.0, help="Minimum seconds between tqdm refreshes when quiet=false.")
+    parser.add_argument("--tqdm-miniters", type=int, default=1000, help="Minimum iterations between tqdm refreshes when quiet=false.")
 
     parser.add_argument("--train-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-train.jsonl")
     parser.add_argument("--test-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-test.jsonl")
