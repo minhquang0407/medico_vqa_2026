@@ -20,6 +20,13 @@ def timestamp():
     return dt.datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
+def torch_load_epoch(checkpoint_path: str) -> int:
+    import torch
+
+    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    return int(checkpoint.get("epoch", 0))
+
+
 def should_echo_line(line: str, *, quiet: bool, last_progress_time: list[float], progress_interval_sec: int) -> bool:
     if not quiet:
         return True
@@ -190,6 +197,9 @@ def train_command(args, checkpoint_dir: Path):
         "--tqdm-miniters",
         str(args.tqdm_miniters),
     ]
+    if args.resume_checkpoint:
+        command.extend(["--resume-checkpoint", args.resume_checkpoint])
+        command.extend(["--resume-reset-scheduler", args.resume_reset_scheduler])
     if args.max_samples and args.max_samples > 0:
         command.extend(["--max-samples", str(args.max_samples)])
     return command
@@ -277,6 +287,8 @@ def main():
     parser.add_argument("--llm-name-or-path", default="Qwen/Qwen2.5-3B-Instruct")
     parser.add_argument("--vision-backend", default="timm", choices=["auto", "timm", "torchvision"])
     parser.add_argument("--epochs", type=int, default=2)
+    parser.add_argument("--resume-checkpoint", default=None, help="Resume training from a checkpoint created by train_structural_vqa_generative.py.")
+    parser.add_argument("--resume-reset-scheduler", default="false", choices=["true", "false"], help="When resuming, reset LR scheduler instead of loading it from checkpoint.")
     parser.add_argument("--max-samples", type=int, default=0, help="0 means full training set.")
     parser.add_argument("--eval-samples", type=int, default=2000, help="0 means full test set.")
     parser.add_argument("--batch-size", type=int, default=4)
@@ -319,7 +331,12 @@ def main():
 
     run_command(train_command(args, checkpoint_dir), log_file, quiet=quiet, progress_interval_sec=args.progress_interval_sec)
 
-    for epoch in range(1, args.epochs + 1):
+    eval_start_epoch = 1
+    if args.resume_checkpoint:
+        resumed = torch_load_epoch(args.resume_checkpoint)
+        eval_start_epoch = resumed + 1
+
+    for epoch in range(eval_start_epoch, args.epochs + 1):
         checkpoint_path = checkpoint_dir / f"epoch_{epoch}.pt"
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Missing epoch checkpoint: {checkpoint_path}")

@@ -236,17 +236,54 @@ def trainable_state_dict(model):
     }
 
 
-def save_checkpoint(path, model, optimizer, epoch, metrics, args):
+def get_rng_state():
+    state = {
+        "python": random.getstate(),
+        "torch": torch.get_rng_state(),
+    }
+    if np is not None:
+        state["numpy"] = np.random.get_state()
+    if torch.cuda.is_available():
+        state["cuda"] = torch.cuda.get_rng_state_all()
+    return state
+
+
+def set_rng_state(state):
+    if not state:
+        return
+    if "python" in state:
+        random.setstate(state["python"])
+    if np is not None and "numpy" in state:
+        np.random.set_state(state["numpy"])
+    if "torch" in state:
+        torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and "cuda" in state:
+        torch.cuda.set_rng_state_all(state["cuda"])
+
+
+def load_trainable_or_full_state(model, state_dict):
+    missing, unexpected = model.load_state_dict(state_dict, strict=False)
+    if unexpected:
+        print(f"⚠️ Unexpected checkpoint keys: {unexpected[:10]}{'...' if len(unexpected) > 10 else ''}")
+    trainable_missing = [name for name, param in model.named_parameters() if param.requires_grad and name in missing]
+    if trainable_missing:
+        raise RuntimeError(f"Missing trainable checkpoint keys: {trainable_missing[:20]}")
+    return missing, unexpected
+
+
+def save_checkpoint(path, model, optimizer, scheduler, epoch, metrics, args):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     save_full = bool(getattr(args, "save_full_checkpoint", False))
     payload = {
         "model_state_dict": model.state_dict() if save_full else trainable_state_dict(model),
-        "optimizer_state_dict": optimizer.state_dict() if save_full else None,
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+        "rng_state": get_rng_state(),
         "epoch": epoch,
         "metrics": metrics,
         "args": vars(args),
-        "checkpoint_format": "full" if save_full else "trainable_only",
+        "checkpoint_format": "full" if save_full else "trainable_with_optimizer",
     }
     tmp_path = path.with_suffix(path.suffix + ".tmp")
     torch.save(payload, tmp_path)
@@ -270,8 +307,10 @@ def main():
         "--save-full-checkpoint",
         type=str2bool,
         default=False,
-        help="Save full model+optimizer checkpoint. Default false saves only trainable weights for LoRA/frozen-base runs.",
+        help="Save full model weights. Default false saves trainable weights plus optimizer/scheduler/RNG for exact epoch-boundary resume.",
     )
+    parser.add_argument("--resume-checkpoint", default=None, help="Resume from an epoch/last checkpoint saved by this script.")
+    parser.add_argument("--resume-reset-scheduler", type=str2bool, default=False, help="Load model/optimizer but rebuild scheduler from scratch.")
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--val-ratio", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
@@ -393,12 +432,34 @@ def main():
     updates_per_epoch = math.ceil(len(train_loader) / max(args.gradient_accumulation_steps, 1))
     total_update_steps = max(updates_per_epoch * args.epochs, 1)
     scheduler = build_lr_scheduler(optimizer, args.lr_scheduler, args.warmup_steps, total_update_steps)
+    start_epoch = 1
+    if args.resume_checkpoint:
+        resume_path = Path(args.resume_checkpoint)
+        print(f"🔁 Resuming from checkpoint: {resume_path}")
+        checkpoint = torch.load(resume_path, map_location="cpu")
+        load_trainable_or_full_state(model, checkpoint["model_state_dict"])
+        if checkpoint.get("optimizer_state_dict") is not None:
+            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            for state in optimizer.state.values():
+                for key, value in state.items():
+                    if torch.is_tensor(value):
+                        state[key] = value.to(device)
+        else:
+            print("⚠️ Resume checkpoint has no optimizer_state_dict; optimizer starts fresh.")
+        if scheduler is not None and not args.resume_reset_scheduler:
+            if checkpoint.get("scheduler_state_dict") is not None:
+                scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
+            else:
+                print("⚠️ Resume checkpoint has no scheduler_state_dict; scheduler starts fresh.")
+        set_rng_state(checkpoint.get("rng_state"))
+        start_epoch = int(checkpoint.get("epoch", 0)) + 1
+        print(f"🔁 Resume start_epoch={start_epoch} total_epochs={args.epochs}")
     print(f"LR scheduler: {args.lr_scheduler} | warmup_steps={args.warmup_steps} | total_update_steps={total_update_steps}")
     optimizer.zero_grad(set_to_none=True)
 
     disable_tqdm = bool(args.disable_tqdm) or os.environ.get("DISABLE_TQDM", "").lower() in {"1", "true", "yes", "y"}
 
-    for epoch in range(1, args.epochs + 1):
+    for epoch in range(start_epoch, args.epochs + 1):
         start = time.time()
         train_metrics = run_epoch(
             model,
@@ -449,8 +510,8 @@ def main():
         print(f"GEN: {preview['generated']}")
         print("--------------------------------------\n")
 
-        save_checkpoint(output_dir / f"epoch_{epoch}.pt", model, optimizer, epoch, row, args)
-        save_checkpoint(output_dir / "last.pt", model, optimizer, epoch, row, args)
+        save_checkpoint(output_dir / f"epoch_{epoch}.pt", model, optimizer, scheduler, epoch, row, args)
+        save_checkpoint(output_dir / "last.pt", model, optimizer, scheduler, epoch, row, args)
 
     model.tokenizer.save_pretrained(output_dir / "tokenizer")
     if args.use_lora and hasattr(model.llm, "save_pretrained"):
