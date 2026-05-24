@@ -436,7 +436,7 @@ def main():
     if args.resume_checkpoint:
         resume_path = Path(args.resume_checkpoint)
         print(f"🔁 Resuming from checkpoint: {resume_path}")
-        checkpoint = torch.load(resume_path, map_location="cpu")
+        checkpoint = torch.load(resume_path, map_location="cpu", weights_only=False)
         load_trainable_or_full_state(model, checkpoint["model_state_dict"])
         if checkpoint.get("optimizer_state_dict") is not None:
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])

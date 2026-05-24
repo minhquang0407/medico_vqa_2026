@@ -23,7 +23,7 @@ def timestamp():
 def torch_load_epoch(checkpoint_path: str) -> int:
     import torch
 
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     return int(checkpoint.get("epoch", 0))
 
 

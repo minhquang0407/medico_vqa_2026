@@ -29,7 +29,7 @@ def batch_to_device(batch, device):
 
 
 def load_model_from_checkpoint(args, device):
-    checkpoint = torch.load(args.checkpoint, map_location="cpu")
+    checkpoint = torch.load(args.checkpoint, map_location="cpu", weights_only=False)
     train_args = checkpoint.get("args", {})
     config = {**train_args}
     config.update(
