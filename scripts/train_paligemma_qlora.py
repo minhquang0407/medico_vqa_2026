@@ -109,6 +109,15 @@ class StructuralHintStore:
         if not manifest.exists():
             print(f"Warning: structural manifest not found: {manifest}")
             return
+
+        # Pre-build a fast npz filename→path lookup from the manifest's sibling
+        # directories once, so we never need rglob per-row.
+        manifest_dir = manifest.parent
+        npz_by_name: dict[str, Path] = {}
+        for npz in manifest_dir.rglob("*.npz"):
+            npz_by_name[npz.name] = npz
+
+        loaded = 0
         with manifest.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -118,25 +127,30 @@ class StructuralHintStore:
                 cache = row.get("cache_path") or ""
                 if not cache:
                     continue
+
+                # Normalize Windows backslashes → forward slashes for Linux.
+                cache = cache.replace("\\", "/")
                 cache_path = Path(cache)
-                if not cache_path.is_absolute():
-                    # Manifests may store paths relative to the project root, e.g.
-                    # data/processed/structural_features/train_original/x.npz.
-                    # First try that path from the current working directory, then
-                    # fall back to paths relative to structural root.
-                    if cache_path.exists():
-                        pass
-                    elif (self.root / cache_path).exists():
-                        cache_path = self.root / cache_path
-                    elif (self.root / cache_path.name).exists():
-                        cache_path = self.root / cache_path.name
-                    else:
-                        matches = list(self.root.rglob(cache_path.name))
-                        if matches:
-                            cache_path = matches[0]
+                npz_name = cache_path.name
+
+                if cache_path.is_absolute() and cache_path.exists():
+                    resolved = cache_path
+                elif cache_path.exists():
+                    resolved = cache_path.resolve()
+                elif (self.root / cache_path).exists():
+                    resolved = self.root / cache_path
+                elif npz_name in npz_by_name:
+                    resolved = npz_by_name[npz_name]
+                else:
+                    continue  # truly missing — skip without rglob
+
                 key = _basename_no_ext(image_ref)
-                if key and cache_path.exists():
-                    self.index[key] = cache_path
+                if key and resolved.exists():
+                    self.index[key] = resolved
+                    loaded += 1
+
+
+        print(f"  manifest {manifest.name}: {loaded} entries indexed")
 
     def get_hint(self, sample: Dict[str, Any]) -> str:
         key = _image_key(sample)
