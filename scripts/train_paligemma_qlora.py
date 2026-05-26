@@ -120,9 +120,20 @@ class StructuralHintStore:
                     continue
                 cache_path = Path(cache)
                 if not cache_path.is_absolute():
-                    cache_path = self.root / cache_path
-                    if not cache_path.exists():
-                        cache_path = self.root / Path(cache).name
+                    # Manifests may store paths relative to the project root, e.g.
+                    # data/processed/structural_features/train_original/x.npz.
+                    # First try that path from the current working directory, then
+                    # fall back to paths relative to structural root.
+                    if cache_path.exists():
+                        pass
+                    elif (self.root / cache_path).exists():
+                        cache_path = self.root / cache_path
+                    elif (self.root / cache_path.name).exists():
+                        cache_path = self.root / cache_path.name
+                    else:
+                        matches = list(self.root.rglob(cache_path.name))
+                        if matches:
+                            cache_path = matches[0]
                 key = _basename_no_ext(image_ref)
                 if key and cache_path.exists():
                     self.index[key] = cache_path
@@ -205,8 +216,9 @@ def structural_hint_from_npz(data) -> str:
 def build_prompt(question: str, structural_hint: str = "") -> str:
     question = str(question).strip()
     if structural_hint:
-        return f"answer en {question} structural hints: {structural_hint}"
-    return f"answer en {question}"
+        # Keep hints compact because PaliGemma reserves many image tokens.
+        return f"<image>answer en {question} hints: {structural_hint}"
+    return f"<image>answer en {question}"
 
 
 def load_kvasir_splits(train_samples: Optional[int] = None, eval_samples: Optional[int] = 1500, seed: int = 42):
@@ -242,7 +254,7 @@ def apply_augmentation(image: Image.Image, transform) -> Image.Image:
 @dataclass
 class PaligemmaCollator:
     processor: Any
-    max_length: int = 224
+    max_length: int = 512
     train: bool = True
     transform: Any = None
     structural_store: Optional[StructuralHintStore] = None
@@ -451,7 +463,7 @@ def parse_args():
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--max-train-samples", type=int, default=None)
     parser.add_argument("--eval-samples", type=int, default=1500)
-    parser.add_argument("--max-length", type=int, default=224)
+    parser.add_argument("--max-length", type=int, default=512)
     parser.add_argument("--max-new-tokens", type=int, default=48)
     parser.add_argument("--use-augmentation", action="store_true")
     parser.add_argument("--use-structural-hints", action="store_true")
