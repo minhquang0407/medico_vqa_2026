@@ -20,6 +20,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.data_pipeline.dataset import MedicoVQADataset, medico_vqa_collate_fn
+from src.evaluation.generative_vqa_metrics import aggregate_scores, score_prediction
 from src.models.structural_vqa_generative import build_structural_generative_vqa
 from scripts.train_structural_vqa_generative import (
     build_lr_scheduler,
@@ -186,20 +187,85 @@ def run_epoch(model, loader, optimizer, device, epoch, train=True, grad_accum=1,
     return {k:v/max(steps,1) for k,v in totals.items()}
 
 
+@torch.no_grad()
+def evaluate_model(model, args, device):
+    eval_dir = Path(args.output_dir) / "eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    ds = MedicoVQADataset(
+        args.eval_jsonl,
+        args.images_dir,
+        args.eval_structural_manifest,
+        strict_structural=False,
+        max_samples=args.eval_samples,
+    )
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=medico_vqa_collate_fn)
+    model.eval()
+    all_scores = []
+    qualitative = []
+    pred_path = eval_dir / "predictions.jsonl"
+    with pred_path.open("w", encoding="utf-8") as f:
+        for batch in tqdm(loader, desc="Full eval"):
+            batch = batch_to_device(batch, device, args.topo_mode)
+            preds = model.generate(
+                image=batch["image"],
+                prior_mask=batch["prior_mask"],
+                topo_features=batch["topo_features"],
+                global_features=batch["global_features"],
+                question_text=batch["question_text"],
+                max_new_tokens=args.max_new_tokens,
+            )
+            for i, pred in enumerate(preds):
+                q = batch["question_text"][i]
+                gt = batch["answer_text"][i]
+                metrics = score_prediction(pred, gt, q)
+                all_scores.append(metrics)
+                row = {
+                    "record_index": int(batch["record_index"][i].detach().cpu()),
+                    "image_ref": batch["image_ref"][i],
+                    "image_path": batch["image_path"][i],
+                    "question": q,
+                    "ground_truth": gt,
+                    "prediction": pred,
+                    "metrics": metrics,
+                }
+                f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                if len(qualitative) < 50:
+                    qualitative.append(row)
+    metrics = aggregate_scores(all_scores)
+    metrics["num_examples"] = len(all_scores)
+    (eval_dir / "metrics.json").write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")
+    (eval_dir / "qualitative_samples.json").write_text(json.dumps(qualitative, ensure_ascii=False, indent=2), encoding="utf-8")
+    with (eval_dir / "qualitative_samples.md").open("w", encoding="utf-8") as f:
+        f.write("# Qualitative Samples\n\n")
+        for row in qualitative:
+            f.write(f"## Record {row['record_index']}\n\n")
+            f.write(f"- Image: `{row['image_ref']}`\n")
+            f.write(f"- Question: {row['question']}\n")
+            f.write(f"- Ground truth: {row['ground_truth']}\n")
+            f.write(f"- Prediction: {row['prediction']}\n")
+            f.write(f"- Token F1: {row['metrics'].get('token_f1', 0):.3f}\n\n")
+    print("Eval metrics:", json.dumps(metrics, ensure_ascii=False, indent=2))
+    return metrics
+
 def main():
     p = argparse.ArgumentParser()
+    p.add_argument("--mode", choices=["train", "eval", "train_eval"], default="train_eval")
     p.add_argument("--jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-train.jsonl")
+    p.add_argument("--eval-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-test.jsonl")
     p.add_argument("--images-dir", default="data/raw/Kvasir-VQA-x1/images")
     p.add_argument("--structural-manifest", default="data/processed/structural_features/train_original_manifest.csv")
+    p.add_argument("--eval-structural-manifest", default="data/processed/structural_features/test_original_manifest.csv")
     p.add_argument("--output-dir", default="outputs/qwen3b_topo_adapter")
     p.add_argument("--llm-name-or-path", default="Qwen/Qwen2.5-3B-Instruct")
     p.add_argument("--topo-mode", choices=["tda_only","all"], default="tda_only")
-    p.add_argument("--max-samples", type=int, default=None); p.add_argument("--epochs", type=int, default=1)
+    p.add_argument("--max-samples", type=int, default=None); p.add_argument("--eval-samples", type=int, default=None); p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--batch-size", type=int, default=1); p.add_argument("--gradient-accumulation-steps", type=int, default=8)
     p.add_argument("--lr", type=float, default=3e-5); p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--seed", type=int, default=42); p.add_argument("--num-workers", type=int, default=0); p.add_argument("--val-ratio", type=float, default=0.0)
     p.add_argument("--bottleneck-dim", type=int, default=32); p.add_argument("--adapter-last-n-layers", type=int, default=8); p.add_argument("--adapter-every-n-layers", type=int, default=0)
     p.add_argument("--vision-pretrained", type=str2bool, default=True); p.add_argument("--vision-backend", default="timm"); p.add_argument("--freeze-vision-backbone", type=str2bool, default=True)
+    p.add_argument("--max-new-tokens", type=int, default=48)
+    p.add_argument("--resume-checkpoint", default=None)
     p.add_argument("--save-full-checkpoint", type=str2bool, default=False)
     args = p.parse_args()
 
@@ -230,18 +296,38 @@ def main():
     opt=torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=args.weight_decay)
     total_updates=max(1, math.ceil(len(train_loader)/args.gradient_accumulation_steps)*args.epochs)
     sched=build_lr_scheduler(opt,"cosine",min(1000,total_updates//10),total_updates)
+    start_epoch = 1
+    if args.resume_checkpoint:
+        ckpt = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
+        load_trainable_or_full_state(model, ckpt)
+        if ckpt.get("optimizer_state_dict") is not None:
+            opt.load_state_dict(ckpt["optimizer_state_dict"])
+        if ckpt.get("scheduler_state_dict") is not None:
+            sched.load_state_dict(ckpt["scheduler_state_dict"])
+        start_epoch = int(ckpt.get("epoch", 0)) + 1
+        print(f"Resumed from {args.resume_checkpoint}; start_epoch={start_epoch}")
     log_path=outdir/"train_log.jsonl"; opt.zero_grad(set_to_none=True)
-    for ep in range(1,args.epochs+1):
-        t0=time.time(); train_m=run_epoch(model,train_loader,opt,device,ep,True,args.gradient_accumulation_steps,sched,args.topo_mode)
-        val_m=run_epoch(model,val_loader,opt,device,ep,False,1,None,args.topo_mode) if val_loader else {}
-        preview=preview_generation(model,train_loader,device)
-        row={"epoch":ep,"elapsed_sec":time.time()-t0,"train":train_m,"val":val_m,"preview":preview,"args":vars(args)}
-        log_path.open("a",encoding="utf-8").write(json.dumps(row,ensure_ascii=False)+"\n")
-        print("Preview:", preview)
-        save_checkpoint(outdir/f"epoch_{ep}.pt", model, opt, sched, ep, row, args)
-        save_checkpoint(outdir/"last.pt", model, opt, sched, ep, row, args)
-    model.tokenizer.save_pretrained(outdir/"tokenizer")
-    if hasattr(model.llm,"save_pretrained"): model.llm.save_pretrained(outdir/"lora_adapter")
+    if args.mode in {"train", "train_eval"}:
+        for ep in range(start_epoch,args.epochs+1):
+            t0=time.time(); train_m=run_epoch(model,train_loader,opt,device,ep,True,args.gradient_accumulation_steps,sched,args.topo_mode)
+            val_m=run_epoch(model,val_loader,opt,device,ep,False,1,None,args.topo_mode) if val_loader else {}
+            preview=preview_generation(model,train_loader,device)
+            row={"epoch":ep,"elapsed_sec":time.time()-t0,"train":train_m,"val":val_m,"preview":preview,"args":vars(args)}
+            log_path.open("a",encoding="utf-8").write(json.dumps(row,ensure_ascii=False)+"\n")
+            print("Preview:", preview)
+            ckpt_dir = outdir / "checkpoints"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            save_checkpoint(ckpt_dir/f"epoch_{ep}.pt", model, opt, sched, ep, row, args)
+            save_checkpoint(ckpt_dir/"last.pt", model, opt, sched, ep, row, args)
+        model.tokenizer.save_pretrained(outdir/"tokenizer")
+        if hasattr(model.llm,"save_pretrained"): model.llm.save_pretrained(outdir/"lora_adapter")
+    if args.mode in {"eval", "train_eval"}:
+        if args.mode == "eval":
+            ckpt_path = args.resume_checkpoint or str(outdir / "checkpoints" / "last.pt")
+            ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+            load_trainable_or_full_state(model, ckpt)
+            print(f"Loaded eval checkpoint: {ckpt_path}")
+        evaluate_model(model, args, device)
     print(f"Done: {outdir}")
 
 if __name__ == "__main__":
