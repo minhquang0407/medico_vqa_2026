@@ -318,9 +318,10 @@ def train(args):
             if (step+1) % args.gradient_accumulation_steps == 0 or (step+1) == len(dl):
                 torch.nn.utils.clip_grad_norm_(params, args.max_grad_norm); opt.step(); sch.step(); opt.zero_grad(set_to_none=True); gstep += 1
                 pbar.set_postfix(loss=loss_sum/max(1, step+1), step=gstep)
-        save_training_checkpoint(out / f"epoch-{ep+1}", model, proc, opt, sch, ep + 1, gstep, args)
-        save_training_checkpoint(out / "last", model, proc, opt, sch, ep + 1, gstep, args)
-    save_training_checkpoint(out, model, proc, opt, sch, args.epochs, gstep, args)
+        ckpt_root = out / "checkpoints"
+        save_training_checkpoint(ckpt_root / f"epoch-{ep+1}", model, proc, opt, sch, ep + 1, gstep, args)
+        save_training_checkpoint(ckpt_root / "last", model, proc, opt, sch, ep + 1, gstep, args)
+    save_training_checkpoint(out / "checkpoints" / "final", model, proc, opt, sch, args.epochs, gstep, args)
     (out/"training_metadata.json").write_text(json.dumps({"args":vars(args), "global_step":gstep, "elapsed_sec":round(time.time()-start,2)}, indent=2), encoding="utf-8")
     return str(out)
 
@@ -365,7 +366,15 @@ def evaluate(args, ckpt=None):
         detailed_rows.append(row_metrics)
     detailed = {k: round(float(v), 4) for k, v in aggregate_scores(detailed_rows).items()}
     scores.update(detailed)
-    print("Scores:", scores); (out/"paligemma_structural_adapter_predictions.json").write_text(json.dumps({"scores":scores,"predictions":preds}, ensure_ascii=False, indent=2), encoding="utf-8")
+    eval_dir = out / "eval"
+    eval_dir.mkdir(parents=True, exist_ok=True)
+    payload = {"scores":scores,"predictions":preds}
+    print("Scores:", scores)
+    (eval_dir/"paligemma_structural_adapter_predictions.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    (eval_dir/"scores.json").write_text(json.dumps(scores, ensure_ascii=False, indent=2), encoding="utf-8")
+    (eval_dir/"predictions.json").write_text(json.dumps(preds, ensure_ascii=False, indent=2), encoding="utf-8")
+    # Backward-compatible copy for old notebooks/scripts.
+    (out/"paligemma_structural_adapter_predictions.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def args():
