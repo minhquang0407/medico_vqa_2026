@@ -7,6 +7,7 @@ Qwen3B adapter challenger so experiment logs are clearly separated from RunB.
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 import sys
 
@@ -66,7 +67,9 @@ def main():
         cmd.extend(["--max-samples", str(a.max_samples)])
     cmd.extend(a.extra)
     print("Running:", " ".join(cmd), flush=True)
-    raise SystemExit(subprocess.call(cmd))
+    env = os.environ.copy()
+    env["PYTHONPATH"] = "." + os.pathsep + env.get("PYTHONPATH", "")
+    raise SystemExit(subprocess.call(cmd, env=env))
 
 
 if __name__ == "__main__":
