@@ -221,6 +221,8 @@ def main():
         global_topo_loss_weight=0.01 if args.topo_mode=="all" else 0.0, patch_topo_loss_weight=0.005,
     ).to(device)
     wrappers=install_topo_adapters(model, topo_dim, args.bottleneck_dim, args.adapter_last_n_layers, args.adapter_every_n_layers)
+    for wrapper in wrappers:
+        wrapper.to(device)
     patch_model_forward(model, wrappers, args.topo_mode)
     trainable=sum(p.numel() for p in model.parameters() if p.requires_grad); total=sum(p.numel() for p in model.parameters())
     print(f"Trainable params: {trainable:,} / {total:,} ({100*trainable/total:.4f}%)")
