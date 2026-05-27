@@ -18,6 +18,10 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from src.evaluation.generative_vqa_metrics import aggregate_scores, score_prediction
+
 _SPACE_RE = re.compile(r"\s+")
 _ANSWER_PREFIX_RE = re.compile(r"^\s*(?:answer\s*[:\-]\s*)+", re.I)
 
@@ -240,6 +244,35 @@ def save_all(wrapper, proc, out: Path):
     torch.save(wrapper.adapter.state_dict(), out / "structural_adapter.pt")
 
 
+def save_training_checkpoint(path: Path, wrapper, proc, optimizer, scheduler, epoch: int, global_step: int, args):
+    save_all(wrapper, proc, path)
+    torch.save(
+        {
+            "epoch": epoch,
+            "global_step": global_step,
+            "optimizer_state_dict": optimizer.state_dict() if optimizer is not None else None,
+            "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
+            "args": vars(args),
+            "rng_state": {
+                "python": random.getstate(),
+                "numpy": np.random.get_state(),
+                "torch": torch.get_rng_state(),
+                "cuda": torch.cuda.get_rng_state_all() if torch.cuda.is_available() else None,
+            },
+        },
+        path / "training_state.pt",
+    )
+
+
+def restore_rng_state(state: Dict[str, Any] | None):
+    if not state:
+        return
+    if state.get("python") is not None: random.setstate(state["python"])
+    if state.get("numpy") is not None: np.random.set_state(state["numpy"])
+    if state.get("torch") is not None: torch.set_rng_state(state["torch"])
+    if torch.cuda.is_available() and state.get("cuda") is not None: torch.cuda.set_rng_state_all(state["cuda"])
+
+
 def train(args):
     from transformers import get_cosine_schedule_with_warmup
     set_seed(args.seed); out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
@@ -252,8 +285,30 @@ def train(args):
     total = max(1, math.ceil(len(dl)/args.gradient_accumulation_steps) * args.epochs)
     warm = args.warmup_steps if args.warmup_steps >= 0 else int(.03 * total)
     sch = get_cosine_schedule_with_warmup(opt, warm, total)
-    model.train(); opt.zero_grad(set_to_none=True); gstep = 0; start=time.time()
-    for ep in range(args.epochs):
+    start_epoch = 0
+    gstep = 0
+    if args.resume_checkpoint:
+        resume = Path(args.resume_checkpoint)
+        print(f"Resuming PaliGemma structural adapter from: {resume}")
+        model.model.load_adapter(resume, adapter_name="default", is_trainable=True)
+        adapter_state = torch.load(resume / "structural_adapter.pt", map_location=model.device)
+        model.adapter.load_state_dict(adapter_state)
+        state_path = resume / "training_state.pt"
+        if state_path.exists():
+            state = torch.load(state_path, map_location="cpu", weights_only=False)
+            start_epoch = int(state.get("epoch", 0))
+            gstep = int(state.get("global_step", 0))
+            if state.get("optimizer_state_dict") is not None:
+                opt.load_state_dict(state["optimizer_state_dict"])
+                for opt_state in opt.state.values():
+                    for k, v in opt_state.items():
+                        if torch.is_tensor(v): opt_state[k] = v.to(model.device)
+            if state.get("scheduler_state_dict") is not None and not args.resume_reset_scheduler:
+                sch.load_state_dict(state["scheduler_state_dict"])
+            restore_rng_state(state.get("rng_state"))
+        print(f"Resume start_epoch={start_epoch}; target total epochs={args.epochs}; global_step={gstep}")
+    model.train(); opt.zero_grad(set_to_none=True); start=time.time()
+    for ep in range(start_epoch, args.epochs):
         pbar = tqdm(dl, desc=f"Training epoch {ep+1}/{args.epochs}")
         loss_sum = 0.0
         for step, batch in enumerate(pbar):
@@ -263,8 +318,9 @@ def train(args):
             if (step+1) % args.gradient_accumulation_steps == 0 or (step+1) == len(dl):
                 torch.nn.utils.clip_grad_norm_(params, args.max_grad_norm); opt.step(); sch.step(); opt.zero_grad(set_to_none=True); gstep += 1
                 pbar.set_postfix(loss=loss_sum/max(1, step+1), step=gstep)
-        save_all(model, proc, out / f"epoch-{ep+1}")
-    save_all(model, proc, out)
+        save_training_checkpoint(out / f"epoch-{ep+1}", model, proc, opt, sch, ep + 1, gstep, args)
+        save_training_checkpoint(out / "last", model, proc, opt, sch, ep + 1, gstep, args)
+    save_training_checkpoint(out, model, proc, opt, sch, args.epochs, gstep, args)
     (out/"training_metadata.json").write_text(json.dumps({"args":vars(args), "global_step":gstep, "elapsed_sec":round(time.time()-start,2)}, indent=2), encoding="utf-8")
     return str(out)
 
@@ -302,6 +358,13 @@ def evaluate(args, ckpt=None):
     txt=[p["answer"] for p in preds]
     bleu=metric("bleu").compute(predictions=txt, references=refs); rouge=metric("rouge").compute(predictions=txt, references=[r[0] for r in refs]); meteor=metric("meteor").compute(predictions=txt, references=[r[0] for r in refs])
     scores={"bleu":round(float(bleu["bleu"]),4),"rouge1":round(float(rouge["rouge1"]),4),"rouge2":round(float(rouge["rouge2"]),4),"rougeL":round(float(rouge["rougeL"]),4),"meteor":round(float(meteor["meteor"]),4)}
+    detailed_rows=[]
+    for row in preds:
+        row_metrics = score_prediction(row["answer"], row["reference"], row["question"])
+        row["metrics"] = row_metrics
+        detailed_rows.append(row_metrics)
+    detailed = {k: round(float(v), 4) for k, v in aggregate_scores(detailed_rows).items()}
+    scores.update(detailed)
     print("Scores:", scores); (out/"paligemma_structural_adapter_predictions.json").write_text(json.dumps({"scores":scores,"predictions":preds}, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
@@ -311,6 +374,7 @@ def args():
     p.add_argument("--max-train-samples", type=int, default=None); p.add_argument("--eval-samples", type=int, default=1500); p.add_argument("--max-length", type=int, default=512); p.add_argument("--max-new-tokens", type=int, default=48); p.add_argument("--use-augmentation", action="store_true")
     p.add_argument("--structural-root", default="."); p.add_argument("--train-structural-manifest", default="data/processed/structural_features/train_original_manifest.csv"); p.add_argument("--eval-structural-manifest", default="data/processed/structural_features/test_original_manifest.csv"); p.add_argument("--structural-mode", choices=["all", "tda_only"], default="all"); p.add_argument("--struct-tokens", type=int, default=8); p.add_argument("--adapter-hidden", type=int, default=512)
     p.add_argument("--lora-r", type=int, default=16); p.add_argument("--lora-alpha", type=int, default=32); p.add_argument("--lora-dropout", type=float, default=.05); p.add_argument("--lora-target-modules", default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj")
+    p.add_argument("--resume-checkpoint", default=None, help="Resume from an output/epoch/last directory saved by this script."); p.add_argument("--resume-reset-scheduler", action="store_true")
     return p.parse_args()
 
 
