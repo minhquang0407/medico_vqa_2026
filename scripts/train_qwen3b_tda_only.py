@@ -52,6 +52,7 @@ def main():
         "--use-ot", "true",
         "--use-ot-fusion", "true",
         "--use-prior-as-ot-target", "false",
+        "--structural-mode", "tda_only",
         "--ot-loss-weight", "0.02",
         "--use-topological-loss", "true",
         "--use-prior-align-loss", "false",

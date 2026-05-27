@@ -49,9 +49,14 @@ def seed_worker(worker_id: int):
         np.random.seed(worker_seed)
 
 
-def batch_to_device(batch, device):
+def batch_to_device(batch, device, structural_mode: str = "all"):
     for key in ["image", "prior_mask", "topo_features", "global_features"]:
         batch[key] = batch[key].to(device)
+    if str(structural_mode or "all").lower() == "tda_only":
+        # Strict TDA-only: keep topology patch features only. Do not let prior
+        # masks or global handcrafted priors enter fusion/losses.
+        batch["prior_mask"] = torch.zeros_like(batch["prior_mask"])
+        batch["global_features"] = torch.zeros_like(batch["global_features"])
     return batch
 
 
@@ -103,6 +108,7 @@ def run_epoch(
     log_every_seconds=600,
     tqdm_mininterval=60,
     tqdm_miniters=1000,
+    structural_mode="all",
 ):
     model.train(train)
     totals = {
@@ -130,7 +136,7 @@ def run_epoch(
     last_tqdm_postfix_time = epoch_start
 
     for batch in iterator:
-        batch = batch_to_device(batch, device)
+        batch = batch_to_device(batch, device, structural_mode=structural_mode)
         with torch.set_grad_enabled(train):
             out = model(
                 image=batch["image"],
@@ -349,6 +355,7 @@ def main():
     parser.add_argument("--lr-scheduler", default="none", choices=["none", "linear", "cosine"])
     parser.add_argument("--warmup-steps", type=int, default=0)
     parser.add_argument("--patch-topo-loss-weight", type=float, default=0.005)
+    parser.add_argument("--structural-mode", default="all", choices=["all", "tda_only"], help="Use all structural features or strict TDA-only features.")
     args = parser.parse_args()
 
     set_reproducible_seed(args.seed)
@@ -475,6 +482,7 @@ def main():
             log_every_seconds=args.log_every_seconds,
             tqdm_mininterval=args.tqdm_mininterval,
             tqdm_miniters=args.tqdm_miniters,
+            structural_mode=args.structural_mode,
         )
         val_metrics = (
             run_epoch(
@@ -489,6 +497,7 @@ def main():
                 log_every_seconds=args.log_every_seconds,
                 tqdm_mininterval=args.tqdm_mininterval,
                 tqdm_miniters=args.tqdm_miniters,
+                structural_mode=args.structural_mode,
             )
             if val_loader is not None
             else {}
