@@ -86,7 +86,8 @@ class StructuralHintStore:
         self.root = Path(root)
         if not self.root.exists():
             raise FileNotFoundError(f"structural root not found: {self.root}")
-        self.index: Dict[str, Path] = {}
+        # pre-load all hints as strings into RAM — eliminates per-sample disk I/O
+        self.index: Dict[str, str] = {}
         manifests: List[Path] = []
         for manifest in [train_manifest, eval_manifest]:
             if manifest == "auto":
@@ -102,7 +103,14 @@ class StructuralHintStore:
                 self._load_manifest(manifest)
         else:
             for npz_path in self.root.rglob("*.npz"):
-                self.index[npz_path.stem.split("_")[0]] = npz_path
+                key = npz_path.stem.split("_")[0]
+                try:
+                    with np.load(npz_path, allow_pickle=True) as d:
+                        hint = structural_hint_from_npz(d)
+                    if hint:
+                        self.index[key] = hint
+                except Exception:
+                    pass
         print(f"Loaded structural hint index: {len(self.index)} images from {self.root}")
 
     def _load_manifest(self, manifest: Path) -> None:
@@ -118,6 +126,7 @@ class StructuralHintStore:
             npz_by_name[npz.name] = npz
 
         loaded = 0
+        errors = 0
         with manifest.open("r", encoding="utf-8", newline="") as f:
             reader = csv.DictReader(f)
             for row in reader:
@@ -128,7 +137,6 @@ class StructuralHintStore:
                 if not cache:
                     continue
 
-                # Normalize Windows backslashes → forward slashes for Linux.
                 cache = cache.replace("\\", "/")
                 cache_path = Path(cache)
                 npz_name = cache_path.name
@@ -142,26 +150,26 @@ class StructuralHintStore:
                 elif npz_name in npz_by_name:
                     resolved = npz_by_name[npz_name]
                 else:
-                    continue  # truly missing — skip without rglob
+                    continue
 
                 key = _basename_no_ext(image_ref)
-                if key and resolved.exists():
-                    self.index[key] = resolved
-                    loaded += 1
+                if not key or not resolved.exists():
+                    continue
+                try:
+                    with np.load(resolved, allow_pickle=True) as data:
+                        hint = structural_hint_from_npz(data)
+                    if hint:
+                        self.index[key] = hint
+                        loaded += 1
+                except Exception:
+                    errors += 1
 
-
-        print(f"  manifest {manifest.name}: {loaded} entries indexed")
+        print(f"  manifest {manifest.name}: {loaded} hints cached, {errors} errors")
 
     def get_hint(self, sample: Dict[str, Any]) -> str:
         key = _image_key(sample)
-        path = self.index.get(key)
-        if path is None or not path.exists():
-            return ""
-        try:
-            with np.load(path, allow_pickle=True) as data:
-                return structural_hint_from_npz(data)
-        except Exception:
-            return ""
+        # index now stores pre-computed hint strings, no disk I/O needed
+        return self.index.get(key, "")
 
 
 def _bucket(value: float, low: float, high: float) -> str:
