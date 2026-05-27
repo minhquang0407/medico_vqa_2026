@@ -47,9 +47,12 @@ def prompt(question: str) -> str:
 
 class StructuralTensorStore:
     """Preloads compact structural tensors into RAM using manifest CSVs."""
-    def __init__(self, root: str | Path, train_manifest: str, eval_manifest: str, max_topo_channels: int = 12):
+    def __init__(self, root: str | Path, train_manifest: str, eval_manifest: str, max_topo_channels: int = 12, mode: str = "all"):
         self.root = Path(root)
         self.max_topo_channels = max_topo_channels
+        self.mode = str(mode or "all").lower()
+        if self.mode not in {"all", "tda_only"}:
+            raise ValueError("structural mode must be 'all' or 'tda_only'")
         self.index: Dict[str, Dict[str, np.ndarray]] = {}
         for m in [train_manifest, eval_manifest]:
             p = Path(m)
@@ -85,19 +88,26 @@ class StructuralTensorStore:
 
     def _read_npz(self, path: Path) -> Dict[str, np.ndarray]:
         with np.load(path, allow_pickle=True) as d:
-            maps = []
-            for k in ["prior_mask", "red_map", "center_map", "morpho_prior_map", "topo_mask"]:
-                maps.append(np.asarray(d.get(k, np.zeros((14, 14))), dtype=np.float32)[..., None])
+            if self.mode == "tda_only":
+                # Only topology-derived features. No prior mask, red map, center map,
+                # morpho prior, or global priors are allowed in this ablation.
+                base_maps = [np.zeros((14, 14, 1), dtype=np.float32) for _ in range(5)]
+                glob = np.zeros(16, dtype=np.float32)
+            else:
+                base_maps = []
+                for k in ["prior_mask", "red_map", "center_map", "morpho_prior_map", "topo_mask"]:
+                    base_maps.append(np.asarray(d.get(k, np.zeros((14, 14))), dtype=np.float32)[..., None])
+                glob = np.asarray(d.get("global_features", np.zeros(16)), dtype=np.float32).reshape(-1)
+                if glob.size < 16: glob = np.pad(glob, (0, 16-glob.size))
+                glob = glob[:16].astype(np.float32)
+
             topo = np.asarray(d.get("topo_features", np.zeros((14, 14, self.max_topo_channels))), dtype=np.float32)
             if topo.ndim != 3: topo = np.zeros((14, 14, self.max_topo_channels), dtype=np.float32)
             if topo.shape[-1] < self.max_topo_channels:
                 pad = np.zeros((14, 14, self.max_topo_channels - topo.shape[-1]), dtype=np.float32)
                 topo = np.concatenate([topo, pad], axis=-1)
             topo = topo[..., :self.max_topo_channels]
-            grid = np.concatenate(maps + [topo], axis=-1).astype(np.float32)  # 14,14,C
-            glob = np.asarray(d.get("global_features", np.zeros(16)), dtype=np.float32).reshape(-1)
-            if glob.size < 16: glob = np.pad(glob, (0, 16-glob.size))
-            glob = glob[:16].astype(np.float32)
+            grid = np.concatenate(base_maps + [topo], axis=-1).astype(np.float32)  # 14,14,C
         return {"grid": grid, "global": glob}
 
     def get(self, sample: Dict[str, Any]) -> Dict[str, np.ndarray]:
@@ -222,7 +232,7 @@ def train(args):
     from transformers import get_cosine_schedule_with_warmup
     set_seed(args.seed); out = Path(args.output_dir); out.mkdir(parents=True, exist_ok=True)
     tr, te = data(args); model, proc = load(args)
-    store = StructuralTensorStore(args.structural_root, args.train_structural_manifest, args.eval_structural_manifest)
+    store = StructuralTensorStore(args.structural_root, args.train_structural_manifest, args.eval_structural_manifest, mode=args.structural_mode)
     coll = Collator(proc, store, args.max_length, True, aug(args.use_augmentation))
     dl = DataLoader(tr, batch_size=args.batch_size, shuffle=True, num_workers=args.num_workers, collate_fn=coll, pin_memory=torch.cuda.is_available())
     params = [p for p in model.parameters() if p.requires_grad]
@@ -272,7 +282,7 @@ def evaluate(args, ckpt=None):
     adapter = StructuralAdapter(17,16,hidden,args.struct_tokens,args.adapter_hidden).to(base.device)
     adapter.load_state_dict(torch.load(ckpt/"structural_adapter.pt", map_location=base.device))
     model = PaliGemmaStructuralWrapper(base, adapter, getattr(proc,"image_token_id",None) or proc.tokenizer.convert_tokens_to_ids("<image>")); model.eval()
-    store = StructuralTensorStore(args.structural_root, args.train_structural_manifest, args.eval_structural_manifest)
+    store = StructuralTensorStore(args.structural_root, args.train_structural_manifest, args.eval_structural_manifest, mode=args.structural_mode)
     _, te = data(args); preds=[]; refs=[]
     for i,s in enumerate(tqdm(te, desc="Evaluating")):
         pred = gen(model, proc, s["image"], s["question"], store.get(s), args.max_new_tokens); ref=normalize_answer(s["answer"])
@@ -287,7 +297,7 @@ def args():
     p=argparse.ArgumentParser(); p.add_argument("--mode", choices=["train","eval","train_eval"], default="train_eval"); p.add_argument("--model-name", default="google/paligemma-3b-pt-224"); p.add_argument("--output-dir", default="outputs/paligemma_struct_adapter")
     p.add_argument("--seed", type=int, default=42); p.add_argument("--epochs", type=int, default=2); p.add_argument("--batch-size", type=int, default=1); p.add_argument("--gradient-accumulation-steps", type=int, default=8); p.add_argument("--learning-rate", type=float, default=2e-5); p.add_argument("--weight-decay", type=float, default=.01); p.add_argument("--warmup-steps", type=int, default=-1); p.add_argument("--max-grad-norm", type=float, default=1.0); p.add_argument("--num-workers", type=int, default=0)
     p.add_argument("--max-train-samples", type=int, default=None); p.add_argument("--eval-samples", type=int, default=1500); p.add_argument("--max-length", type=int, default=512); p.add_argument("--max-new-tokens", type=int, default=48); p.add_argument("--use-augmentation", action="store_true")
-    p.add_argument("--structural-root", default="."); p.add_argument("--train-structural-manifest", default="data/processed/structural_features/train_original_manifest.csv"); p.add_argument("--eval-structural-manifest", default="data/processed/structural_features/test_original_manifest.csv"); p.add_argument("--struct-tokens", type=int, default=8); p.add_argument("--adapter-hidden", type=int, default=512)
+    p.add_argument("--structural-root", default="."); p.add_argument("--train-structural-manifest", default="data/processed/structural_features/train_original_manifest.csv"); p.add_argument("--eval-structural-manifest", default="data/processed/structural_features/test_original_manifest.csv"); p.add_argument("--structural-mode", choices=["all", "tda_only"], default="all"); p.add_argument("--struct-tokens", type=int, default=8); p.add_argument("--adapter-hidden", type=int, default=512)
     p.add_argument("--lora-r", type=int, default=16); p.add_argument("--lora-alpha", type=int, default=32); p.add_argument("--lora-dropout", type=float, default=.05); p.add_argument("--lora-target-modules", default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj")
     return p.parse_args()
 
