@@ -299,7 +299,7 @@ def main():
     start_epoch = 1
     if args.resume_checkpoint:
         ckpt = torch.load(args.resume_checkpoint, map_location="cpu", weights_only=False)
-        load_trainable_or_full_state(model, ckpt)
+        load_trainable_or_full_state(model, ckpt.get("model_state_dict", ckpt))
         if ckpt.get("optimizer_state_dict") is not None:
             opt.load_state_dict(ckpt["optimizer_state_dict"])
         if ckpt.get("scheduler_state_dict") is not None:
@@ -325,7 +325,7 @@ def main():
         if args.mode == "eval":
             ckpt_path = args.resume_checkpoint or str(outdir / "checkpoints" / "last.pt")
             ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-            load_trainable_or_full_state(model, ckpt)
+            load_trainable_or_full_state(model, ckpt.get("model_state_dict", ckpt))
             print(f"Loaded eval checkpoint: {ckpt_path}")
         evaluate_model(model, args, device)
     print(f"Done: {outdir}")
