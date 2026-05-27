@@ -122,6 +122,10 @@ class StructuralAdapter(nn.Module):
         self.query = nn.Parameter(torch.randn(struct_tokens, hidden_size) * 0.02)
         self.global_proj = nn.Sequential(nn.Linear(global_dim, adapter_hidden), nn.GELU(), nn.Linear(adapter_hidden, hidden_size))
         self.norm = nn.LayerNorm(hidden_size)
+        # Critical: start with almost-zero structural influence. Otherwise random
+        # adapter tokens perturb PaliGemma's pretrained VQA prior and generation
+        # collapses to short answers like "yes"/"no"/"0" in early training.
+        self.gate_logit = nn.Parameter(torch.tensor(-6.0))
 
     def forward(self, grid: torch.Tensor, global_features: torch.Tensor) -> torch.Tensor:
         b = grid.shape[0]
@@ -130,7 +134,8 @@ class StructuralAdapter(nn.Module):
         attn = torch.softmax(torch.matmul(q, patches.transpose(1,2)) / math.sqrt(patches.shape[-1]), dim=-1)
         pooled = torch.matmul(attn, patches)  # B,K,H
         g = self.global_proj(global_features).unsqueeze(1)
-        return self.norm(torch.cat([pooled, g], dim=1))
+        tokens = self.norm(torch.cat([pooled, g], dim=1))
+        return tokens * torch.sigmoid(self.gate_logit)
 
 
 class PaliGemmaStructuralWrapper(nn.Module):
