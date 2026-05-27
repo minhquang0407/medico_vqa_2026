@@ -144,7 +144,14 @@ class PaliGemmaStructuralWrapper(nn.Module):
     def _insert(self, input_ids, attention_mask, labels, grid, global_features):
         embed_layer = self.model.get_input_embeddings()
         embeds = embed_layer(input_ids)
-        st = self.adapter(grid.to(embeds.dtype), global_features.to(embeds.dtype)).to(embeds.device)
+        # Run adapter in its own parameter dtype (usually fp32), then cast soft
+        # tokens to the PaliGemma embedding dtype. This avoids bf16/fp32 Linear
+        # mismatches during eval/generation without forcing the adapter weights.
+        adapter_dtype = next(self.adapter.parameters()).dtype
+        st = self.adapter(
+            grid.to(device=embeds.device, dtype=adapter_dtype),
+            global_features.to(device=embeds.device, dtype=adapter_dtype),
+        ).to(device=embeds.device, dtype=embeds.dtype)
         b, k, h = st.shape
         out_e, out_m, out_l = [], [], []
         for i in range(b):
