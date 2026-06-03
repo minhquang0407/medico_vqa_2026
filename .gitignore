@@ -4,7 +4,7 @@ checkpoints/
 eval/
 logs/
 visuals/
-
+outputs/
 # Python
 __pycache__/
 *.py[cod]
@@ -14,7 +14,8 @@ __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
-
+*.json
+*.pdf
 # Virtual environments
 .venv/
 venv/

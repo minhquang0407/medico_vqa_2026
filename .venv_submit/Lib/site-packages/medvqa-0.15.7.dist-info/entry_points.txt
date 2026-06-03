@@ -1,0 +1,2 @@
+[console_scripts]
+medvqa = medvqa.cli:main

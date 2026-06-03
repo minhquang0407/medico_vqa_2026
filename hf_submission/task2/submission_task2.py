@@ -6,14 +6,20 @@ lightweight and should not load any model.
 """
 
 SUBMISSION_INFO = {
-    "Participant_Names": "TODO",
-    "Affiliations": "TODO",
-    "Contact_emails": ["TODO"],
-    "Team_Name": "TODO",
-    "Country": "TODO",
+    "Participant_Names": "Nguyễn Minh Quang",
+    "Affiliations": "Independent",
+    "Contact_emails": ["nmquang04072005@gmail.com"],
+    "Team_Name": "Sweet&Sour",
+    "Country": "Vietnam",
     "Notes_to_organizers": """
-    TODO: Uses FINAL Task 1 Qwen2.5-3B A3 structural VQA answers with a
-    Bayes-gated multimodal explanation pipeline combining lesion priors,
-    morphology/topology evidence, and OT attention diagnostics.
+    Uses CATA-Final, the selected Task 1 CATA model initialized from
+    qwen3b_curriculum_topo_adapter_full_full_continue and fine-tuned for one
+    additional epoch on the released test split under the organizers' permitted
+    setting. Task 2 answers are intended to match the CATA-Final Task 1
+    predictions for the same Subtask 2 validation items. Explanations combine
+    targeted self-probing, freshly regenerated lesion-prior and morphology/TDA
+    heatmaps, structured evidence JSON, and reliability-style confidence
+    estimates. Test-set fine-tuning is disclosed separately from the clean
+    training-only CATA checkpoint.
     """,
 }

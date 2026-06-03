@@ -3,7 +3,7 @@ import re
 import string
 from collections import Counter
 from difflib import SequenceMatcher
-from typing import Dict, Iterable, List
+from typing import Dict, Iterable, List, Optional, Sequence
 
 
 _ARTICLES = {"a", "an", "the"}
@@ -65,6 +65,22 @@ def bleu_n(prediction: str, ground_truth: str, n: int = 1) -> float:
     precision = overlap / max(sum(pred_ngrams.values()), 1)
     brevity = 1.0 if len(pred_tokens) > len(gold_tokens) else math.exp(1 - len(gold_tokens) / max(len(pred_tokens), 1))
     return brevity * precision
+
+
+def rouge_n(prediction: str, ground_truth: str, n: int = 1) -> float:
+    """Lightweight per-example ROUGE-N F1 used for internal diagnostics."""
+    pred_tokens = normalize_answer(prediction).split()
+    gold_tokens = normalize_answer(ground_truth).split()
+    if len(pred_tokens) < n or len(gold_tokens) < n:
+        return 0.0
+    pred_ngrams = Counter(tuple(pred_tokens[i : i + n]) for i in range(len(pred_tokens) - n + 1))
+    gold_ngrams = Counter(tuple(gold_tokens[i : i + n]) for i in range(len(gold_tokens) - n + 1))
+    overlap = sum((pred_ngrams & gold_ngrams).values())
+    if overlap == 0:
+        return 0.0
+    precision = overlap / max(sum(pred_ngrams.values()), 1)
+    recall = overlap / max(sum(gold_ngrams.values()), 1)
+    return 2 * precision * recall / (precision + recall + 1e-12)
 
 
 def _contains_any(text: str, terms: Iterable[str]) -> bool:
@@ -216,6 +232,8 @@ def score_prediction(prediction: str, ground_truth: str, question: str = "") -> 
     scores = {
         "exact_match": exact_match(prediction, ground_truth),
         "token_f1": token_f1(prediction, ground_truth),
+        "rouge_1": rouge_n(prediction, ground_truth, n=1),
+        "rouge_2": rouge_n(prediction, ground_truth, n=2),
         "rouge_l": rouge_l(prediction, ground_truth),
         "bleu_1": bleu_n(prediction, ground_truth, n=1),
         "bleu_4": bleu_n(prediction, ground_truth, n=4),
@@ -238,3 +256,81 @@ def aggregate_scores(rows: List[Dict[str, float]]) -> Dict[str, float]:
             values = [float(row[key]) for row in rows if key in row]
             aggregated[key] = sum(values) / max(len(values), 1)
     return aggregated
+
+
+def _try_import_optional(module_name: str):
+    try:
+        return __import__(module_name)
+    except Exception:
+        return None
+
+
+def compute_corpus_generation_metrics(
+    predictions: Sequence[str],
+    references: Sequence[str],
+    *,
+    compute_bertscore: bool = False,
+    bertscore_model: str = "microsoft/deberta-xlarge-mnli",
+    bertscore_batch_size: int = 16,
+    require_bertscore: bool = False,
+) -> Dict[str, float]:
+    """Compute paper-ready corpus metrics with optional dependencies.
+
+    Missing optional packages are skipped, so training/evaluation does not crash
+    on lightweight environments. Returned keys are stable when the package is
+    available:
+      corpus_bleu, chrf_pp, rouge1, rouge2, rougeL, meteor, bertscore_f1.
+    """
+    preds = [str(x or "") for x in predictions]
+    refs = [str(x or "") for x in references]
+    metrics: Dict[str, float] = {}
+
+    sacrebleu = _try_import_optional("sacrebleu")
+    if sacrebleu is not None and preds:
+        try:
+            metrics["corpus_bleu"] = float(sacrebleu.corpus_bleu(preds, [refs]).score / 100.0)
+            metrics["chrf_pp"] = float(sacrebleu.corpus_chrf(preds, [refs], word_order=2).score / 100.0)
+        except Exception as exc:
+            metrics["sacrebleu_error"] = str(exc)
+
+    try:
+        from rouge_score import rouge_scorer
+
+        scorer = rouge_scorer.RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
+        rouge_rows = [scorer.score(ref, pred) for pred, ref in zip(preds, refs)]
+        if rouge_rows:
+            metrics["rouge1"] = sum(row["rouge1"].fmeasure for row in rouge_rows) / len(rouge_rows)
+            metrics["rouge2"] = sum(row["rouge2"].fmeasure for row in rouge_rows) / len(rouge_rows)
+            metrics["rougeL"] = sum(row["rougeL"].fmeasure for row in rouge_rows) / len(rouge_rows)
+    except Exception as exc:
+        metrics["rouge_score_error"] = str(exc)
+
+    try:
+        from nltk.translate.meteor_score import meteor_score
+
+        meteor_values = [meteor_score([normalize_answer(ref).split()], normalize_answer(pred).split()) for pred, ref in zip(preds, refs)]
+        if meteor_values:
+            metrics["meteor"] = sum(float(x) for x in meteor_values) / len(meteor_values)
+    except Exception as exc:
+        metrics["meteor_error"] = str(exc)
+
+    if compute_bertscore:
+        try:
+            from bert_score import score as bert_score
+
+            _, _, f1 = bert_score(
+                preds,
+                refs,
+                model_type=bertscore_model,
+                batch_size=bertscore_batch_size,
+                verbose=False,
+                rescale_with_baseline=False,
+            )
+            metrics["bertscore_f1"] = float(f1.mean().item())
+        except Exception as exc:
+            if require_bertscore:
+                raise
+            metrics["bertscore_error"] = str(exc)
+
+    return metrics
+

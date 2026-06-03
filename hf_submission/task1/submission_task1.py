@@ -69,20 +69,7 @@ except Exception as exc:  # pragma: no cover - validator environment dependent
     build_structural_generative_vqa = None
 
 
-try:
-    from src.postprocessing.answer_normalization import normalize_prediction
-except Exception:  # pragma: no cover - fallback for lightweight smoke validation
-    import re
 
-    _SPACE_RE = re.compile(r"\s+")
-    _LEADING_ANSWER_RE = re.compile(r"^\s*(?:answer\s*[:\-]\s*)+", re.IGNORECASE)
-
-    def normalize_prediction(prediction: str, question: str = "") -> str:
-        del question
-        text = _SPACE_RE.sub(" ", str(prediction or "")).strip()
-        text = _LEADING_ANSWER_RE.sub("", text)
-        text = re.sub(r"\s+([,.;:!?])", r"\1", text)
-        return _SPACE_RE.sub(" ", text).strip()
 
 
 CHECKPOINT_CANDIDATES = [
@@ -164,9 +151,9 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
     config.update(
         {
             "llm_name_or_path": train_args.get("llm_name_or_path", "Qwen/Qwen2.5-3B-Instruct"),
-            "vision_pretrained": False,
+            "vision_pretrained": train_args.get("vision_pretrained", True),
             "vision_backend": train_args.get("vision_backend", "timm"),
-            "freeze_vision_backbone": True,
+            "freeze_vision_backbone": train_args.get("freeze_vision_backbone", True),
             "freeze_llm": train_args.get("freeze_llm", True),
         }
     )
@@ -310,7 +297,7 @@ def predict_one(image: Image.Image, question: str, max_new_tokens: int = 48) -> 
             question_text=[question],
             max_new_tokens=max_new_tokens,
         )[0]
-    return normalize_prediction(prediction, question)
+    return prediction.strip()
 
 
 def predict(batch: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:

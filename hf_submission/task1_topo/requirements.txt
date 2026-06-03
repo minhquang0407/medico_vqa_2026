@@ -1,0 +1,16 @@
+torch
+transformers
+peft
+torchao>=0.16.0
+timm
+accelerate
+sentencepiece
+protobuf
+Pillow
+numpy
+pandas
+scikit-learn
+tqdm
+evaluate
+rouge-score
+opencv-python-headless

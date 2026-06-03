@@ -7,7 +7,6 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 from src.data_pipeline.dataset import MedicoVQADataset, medico_vqa_collate_fn
-from src.evaluation.generative_vqa_metrics import aggregate_scores, score_prediction
 from src.models.structural_vqa_generative import build_structural_generative_vqa
 
 
@@ -118,8 +117,7 @@ def main():
     model = load_model_from_checkpoint(args, device)
 
     prediction_path = output_dir / "predictions.jsonl"
-    all_scores = []
-    qualitative = []
+    num_predictions = 0
 
     with prediction_path.open("w", encoding="utf-8") as f:
         for batch in tqdm(dataloader, desc="Evaluating"):
@@ -135,8 +133,6 @@ def main():
             for idx, pred in enumerate(predictions):
                 question = batch["question_text"][idx]
                 gold = batch["answer_text"][idx]
-                scores = score_prediction(pred, gold, question)
-                all_scores.append(scores)
                 row = {
                     "record_index": int(batch["record_index"][idx].cpu()),
                     "image_ref": batch["image_ref"][idx],
@@ -144,29 +140,12 @@ def main():
                     "question": question,
                     "ground_truth": gold,
                     "prediction": pred,
-                    "metrics": scores,
                 }
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
-                if len(qualitative) < 50:
-                    qualitative.append(row)
+                num_predictions += 1
 
-    metrics = aggregate_scores(all_scores)
-    metrics["num_examples"] = len(all_scores)
-    with (output_dir / "metrics.json").open("w", encoding="utf-8") as f:
-        json.dump(metrics, f, ensure_ascii=False, indent=2)
-
-    with (output_dir / "qualitative_samples.md").open("w", encoding="utf-8") as f:
-        f.write("# Qualitative Samples\n\n")
-        for row in qualitative:
-            f.write(f"## Record {row['record_index']}\n\n")
-            f.write(f"- Image: `{row['image_ref']}`\n")
-            f.write(f"- Question: {row['question']}\n")
-            f.write(f"- Ground truth: {row['ground_truth']}\n")
-            f.write(f"- Prediction: {row['prediction']}\n")
-            f.write(f"- Token F1: {row['metrics'].get('token_f1', 0):.3f}\n\n")
-
-    print(json.dumps(metrics, ensure_ascii=False, indent=2))
-    print(f"✅ Evaluation complete. Output dir: {output_dir}")
+    print(f"✅ Generation complete. Wrote {num_predictions} rows to: {prediction_path}")
+    print("Next: run scripts/evaluate_paper_metrics.py on this predictions.jsonl file.")
 
 
 if __name__ == "__main__":
