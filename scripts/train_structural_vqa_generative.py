@@ -52,7 +52,12 @@ def seed_worker(worker_id: int):
 def batch_to_device(batch, device, structural_mode: str = "all"):
     for key in ["image", "prior_mask", "topo_features", "global_features"]:
         batch[key] = batch[key].to(device)
-    if str(structural_mode or "all").lower() == "tda_only":
+    mode = str(structural_mode or "all").lower()
+    if mode == "none":
+        batch["prior_mask"] = torch.zeros_like(batch["prior_mask"])
+        batch["topo_features"] = torch.zeros_like(batch["topo_features"])
+        batch["global_features"] = torch.zeros_like(batch["global_features"])
+    elif mode == "tda_only":
         # Strict TDA-only: keep topology patch features only. Do not let prior
         # masks or global handcrafted priors enter fusion/losses.
         batch["prior_mask"] = torch.zeros_like(batch["prior_mask"])
@@ -333,6 +338,8 @@ def main():
     parser.add_argument("--lora-alpha", type=int, default=16)
     parser.add_argument("--lora-dropout", type=float, default=0.05)
     parser.add_argument("--lora-target-modules", default="q_proj,v_proj")
+    parser.add_argument("--visual-structural-mode", default="all", choices=["none", "tda_only", "all"])
+    parser.add_argument("--use-global-structural-token", type=str2bool, default=True)
 
     parser.add_argument("--ot-loss-weight", type=float, default=0.05)
     parser.add_argument("--use-ot", type=str2bool, default=True)
@@ -355,7 +362,12 @@ def main():
     parser.add_argument("--lr-scheduler", default="none", choices=["none", "linear", "cosine"])
     parser.add_argument("--warmup-steps", type=int, default=0)
     parser.add_argument("--patch-topo-loss-weight", type=float, default=0.005)
-    parser.add_argument("--structural-mode", default="all", choices=["all", "tda_only"], help="Use all structural features or strict TDA-only features.")
+    parser.add_argument(
+        "--structural-mode",
+        default="all",
+        choices=["none", "all", "tda_only"],
+        help="Batch-level structural tensors: all features, strict TDA-only, or fully zeroed structural inputs.",
+    )
     args = parser.parse_args()
 
     set_reproducible_seed(args.seed)
@@ -419,6 +431,8 @@ def main():
         lora_alpha=args.lora_alpha,
         lora_dropout=args.lora_dropout,
         lora_target_modules=args.lora_target_modules,
+        visual_structural_mode=args.visual_structural_mode,
+        use_global_structural_token=args.use_global_structural_token,
         ot_loss_weight=args.ot_loss_weight,
         use_ot=args.use_ot,
         use_ot_fusion=args.use_ot_fusion,

@@ -1,28 +1,8 @@
-"""Run A0 clean ablation: ViT pretrained + Qwen image-only baseline.
+"""Run S clean ablation: full structural visual-token fusion only.
 
-This runner trains and evaluates a non-structural baseline for the Medico VQA
-paper/ablation table. It disables every structural path: no post-ViT structural
-fusion, no global structural token, no OT fusion, and no topological losses.
-
-Outputs per run:
-  - <output-root>/<run-id>/config.json
-  - <output-root>/<run-id>/train_command.json
-  - <output-root>/<run-id>/eval_command.json
-  - <output-root>/<run-id>/paper_metrics_command.json
-  - <output-root>/<run-id>/train.log
-  - <output-root>/<run-id>/eval.log
-  - <output-root>/<run-id>/checkpoints/{epoch_*.pt,last.pt,train_log.jsonl}
-  - <output-root>/<run-id>/eval/predictions.jsonl
-  - <output-root>/<run-id>/summary.json
-
-Example:
-  python scripts/run_group_a_baseline.py --epochs 1 --max-samples 30000
-
-Full train + full-test generation:
-  python scripts/run_group_a_baseline.py --epochs 1 --max-samples 0 --eval-max-samples 0
-
-After generation, compute paper metrics separately:
-  python scripts/evaluate_paper_metrics.py --input <output-root>/<run-id>/eval/predictions.jsonl
+S keeps the pretrained ViT + Qwen LoRA setup and enables the Task-1 structural
+visual pipeline: post-ViT prior/TDA/global fusion, prior-guided OT/prefix, and
+structural auxiliary losses. It does not install any LLM TopoAdapter.
 """
 from __future__ import annotations
 
@@ -149,37 +129,36 @@ def build_train_command(args: argparse.Namespace, checkpoint_dir: Path) -> List[
         str(args.val_ratio),
         "--device",
         args.device,
-        # Group A baseline: no structural OT/fusion/losses.
-        "--use-ot",
-        "false",
-        "--use-ot-fusion",
-        "false",
-        "--ot-fusion-mode",
-        "none",
-        "--use-prior-as-ot-target",
-        "false",
-        "--use-topological-loss",
-        "false",
-        "--use-prior-align-loss",
-        "false",
-        "--use-global-topo-loss",
-        "false",
-        "--use-patch-topo-loss",
-        "false",
-        "--prior-loss-weight",
-        "0.0",
-        "--global-topo-loss-weight",
-        "0.0",
-        "--patch-topo-loss-weight",
-        "0.0",
-        "--ot-loss-weight",
-        "0.0",
         "--structural-mode",
-        "none",
+        "all",
         "--visual-structural-mode",
-        "none",
+        "all",
         "--use-global-structural-token",
-        "false",
+        "true",
+        "--use-ot",
+        "true",
+        "--use-ot-fusion",
+        "true",
+        "--ot-fusion-mode",
+        "prefix",
+        "--use-prior-as-ot-target",
+        "true",
+        "--use-topological-loss",
+        "true",
+        "--use-prior-align-loss",
+        "true",
+        "--use-global-topo-loss",
+        "true",
+        "--use-patch-topo-loss",
+        "true",
+        "--prior-loss-weight",
+        str(args.prior_loss_weight),
+        "--global-topo-loss-weight",
+        str(args.global_topo_loss_weight),
+        "--patch-topo-loss-weight",
+        str(args.patch_topo_loss_weight),
+        "--ot-loss-weight",
+        str(args.ot_loss_weight),
         "--disable-tqdm",
         bool_arg(args.disable_tqdm),
         "--log-every-steps",
@@ -233,17 +212,10 @@ def build_eval_command(args: argparse.Namespace, checkpoint_dir: Path, eval_dir:
     return command
 
 
-def load_json(path: Path) -> Optional[Dict[str, Any]]:
-    if not path.exists():
-        return None
-    with path.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Train/evaluate A0 clean ViT-pretrained + Qwen image-only baseline.")
+    parser = argparse.ArgumentParser(description="Train/evaluate S clean full structural-only ablation.")
     parser.add_argument("--run-name", default=None)
-    parser.add_argument("--output-root", default="outputs/ablations/group_a_baseline")
+    parser.add_argument("--output-root", default="outputs/ablations/s_structural_only")
     parser.add_argument("--train-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-train.jsonl")
     parser.add_argument("--test-jsonl", default="data/raw/Kvasir-VQA-x1/Kvasir-VQA-x1-test.jsonl")
     parser.add_argument("--images-dir", default="data/raw/Kvasir-VQA-x1/images")
@@ -268,23 +240,17 @@ def main() -> None:
     parser.add_argument("--weight-decay", type=float, default=1e-4)
     parser.add_argument("--lr-scheduler", default="cosine", choices=["none", "linear", "cosine"])
     parser.add_argument("--warmup-steps", type=int, default=1000)
+    parser.add_argument("--ot-loss-weight", type=float, default=0.05)
+    parser.add_argument("--prior-loss-weight", type=float, default=0.05)
+    parser.add_argument("--global-topo-loss-weight", type=float, default=0.01)
+    parser.add_argument("--patch-topo-loss-weight", type=float, default=0.005)
     parser.add_argument("--val-ratio", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-workers", type=int, default=2)
     parser.add_argument("--device", default="auto")
 
-    parser.add_argument(
-        "--eval-batch-size",
-        type=int,
-        default=4,
-        help="Batch size for evaluation inference.",
-    )
-    parser.add_argument(
-        "--eval-max-samples",
-        type=int,
-        default=0,
-        help="Number of test samples to generate. Use 0 for the full test set. Use 1500 only for the official HF public subset.",
-    )
+    parser.add_argument("--eval-batch-size", type=int, default=4)
+    parser.add_argument("--eval-max-samples", type=int, default=0, help="Use 0 for full test set.")
     parser.add_argument("--max-new-tokens", type=int, default=48)
     parser.add_argument("--disable-tqdm", type=str2bool, default=False)
     parser.add_argument("--log-every-steps", type=int, default=5000)
@@ -294,27 +260,28 @@ def main() -> None:
     args = parser.parse_args()
 
     repo_dir = Path(__file__).resolve().parents[1]
-    run_name = args.run_name or f"a0_clean_image_only_{timestamp()}"
+    run_name = args.run_name or f"s_structural_only_{timestamp()}"
     run_dir = Path(args.output_root) / run_name
     checkpoint_dir = run_dir / "checkpoints"
     eval_dir = run_dir / "eval"
     run_dir.mkdir(parents=True, exist_ok=True)
 
     config = {
-        "ablation_group": "A0",
-        "ablation_name": "Clean image-only ViT pretrained + Qwen LoRA baseline",
-        "description": "Structural mode is none: no post-ViT structural fusion, no global structural token, no OT fusion, and no topological losses.",
+        "ablation_group": "S",
+        "ablation_name": "Full structural visual-token fusion only",
+        "description": "Task-1 structural visual pipeline with no LLM TopoAdapter.",
         "structural_features": {
-            "use_ot": False,
-            "use_ot_fusion": False,
-            "use_prior_as_ot_target": False,
-            "use_topological_loss": False,
-            "use_prior_align_loss": False,
-            "use_global_topo_loss": False,
-            "use_patch_topo_loss": False,
-            "visual_structural_mode": "none",
-            "use_global_structural_token": False,
-            "structural_mode": "none",
+            "structural_mode": "all",
+            "visual_structural_mode": "all",
+            "use_global_structural_token": True,
+            "use_ot": True,
+            "use_ot_fusion": True,
+            "use_prior_as_ot_target": True,
+            "use_topological_loss": True,
+            "use_prior_align_loss": True,
+            "use_global_topo_loss": True,
+            "use_patch_topo_loss": True,
+            "llm_topo_adapter": False,
         },
         "args": vars(args),
         "run_dir": str(run_dir),
@@ -330,26 +297,12 @@ def main() -> None:
 
     train_cmd = build_train_command(args, checkpoint_dir)
     eval_cmd = build_eval_command(args, checkpoint_dir, eval_dir)
-    paper_metrics_cmd = [
-        sys.executable,
-        "-m",
-        "scripts.evaluate_paper_metrics",
-        "--input",
-        str(eval_dir / "predictions.jsonl"),
-    ]
+    paper_metrics_cmd = [sys.executable, "-m", "scripts.evaluate_paper_metrics", "--input", str(eval_dir / "predictions.jsonl")]
     (run_dir / "train_command.json").write_text(json.dumps(train_cmd, ensure_ascii=False, indent=2), encoding="utf-8")
     (run_dir / "eval_command.json").write_text(json.dumps(eval_cmd, ensure_ascii=False, indent=2), encoding="utf-8")
     (run_dir / "paper_metrics_command.json").write_text(json.dumps(paper_metrics_cmd, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    predictions_path = eval_dir / "predictions.jsonl"
-    summary: Dict[str, Any] = {
-        "config": config,
-        "train_returncode": None,
-        "eval_returncode": None,
-        "predictions_path": str(predictions_path),
-        "paper_metrics_command": paper_metrics_cmd,
-    }
-
+    summary: Dict[str, Any] = {"config": config, "train_returncode": None, "eval_returncode": None, "metrics_returncode": None}
     train_rc = run_command(train_cmd, run_dir / "train.log", repo_dir, env, dry_run=args.dry_run)
     summary["train_returncode"] = train_rc
     if train_rc != 0:
@@ -358,18 +311,22 @@ def main() -> None:
 
     eval_rc = run_command(eval_cmd, run_dir / "eval.log", repo_dir, env, dry_run=args.dry_run)
     summary["eval_returncode"] = eval_rc
-    summary["predictions_exists"] = False if args.dry_run else predictions_path.exists()
-    (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-
     if eval_rc != 0:
+        (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         raise SystemExit(f"Evaluation failed with return code {eval_rc}. See {run_dir / 'eval.log'}")
 
-    print("\n✅ A0 clean image-only baseline complete")
-    print(f"Run dir:      {run_dir}")
-    print(f"Config:       {run_dir / 'config.json'}")
-    print(f"Predictions:  {predictions_path}")
-    print("Next metrics command:")
-    print(" ".join(paper_metrics_cmd))
+    metrics_rc = run_command(paper_metrics_cmd, run_dir / "paper_metrics.log", repo_dir, env, dry_run=args.dry_run)
+    summary["metrics_returncode"] = metrics_rc
+    summary["predictions_path"] = str(eval_dir / "predictions.jsonl")
+    summary["paper_metrics_path"] = str(eval_dir / "paper_metrics.json")
+    (run_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    if metrics_rc != 0:
+        raise SystemExit(f"Metrics failed with return code {metrics_rc}. See {run_dir / 'paper_metrics.log'}")
+
+    print("\n✅ S structural-only ablation complete")
+    print(f"Run dir:     {run_dir}")
+    print(f"Predictions: {eval_dir / 'predictions.jsonl'}")
+    print(f"Metrics:     {eval_dir / 'paper_metrics.json'}")
 
 
 if __name__ == "__main__":

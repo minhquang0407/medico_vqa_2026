@@ -40,6 +40,10 @@ def load_model_from_checkpoint(args, device):
             "freeze_llm": train_args.get("freeze_llm", True),
         }
     )
+    if args.visual_structural_mode is not None:
+        config["visual_structural_mode"] = args.visual_structural_mode
+    if args.use_global_structural_token is not None:
+        config["use_global_structural_token"] = args.use_global_structural_token
     allowed = {
         "llm_name_or_path",
         "vision_pretrained",
@@ -67,6 +71,8 @@ def load_model_from_checkpoint(args, device):
         "prior_loss_weight",
         "global_topo_loss_weight",
         "patch_topo_loss_weight",
+        "visual_structural_mode",
+        "use_global_structural_token",
     }
     build_kwargs = {key: value for key, value in config.items() if key in allowed}
     model = build_structural_generative_vqa(**build_kwargs).to(device)
@@ -86,6 +92,8 @@ def main():
     parser.add_argument("--vision-backend", default=None)
     parser.add_argument("--vision-pretrained", type=str2bool, default=False)
     parser.add_argument("--freeze-vision-backbone", type=str2bool, default=True)
+    parser.add_argument("--visual-structural-mode", default=None, choices=["none", "tda_only", "all"])
+    parser.add_argument("--use-global-structural-token", type=str2bool, default=None)
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--batch-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)

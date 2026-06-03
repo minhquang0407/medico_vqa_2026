@@ -181,6 +181,34 @@ def batch_to_device(batch, device, topo_mode: str):
     return batch
 
 
+def resolve_base_structural_flags(args) -> Dict[str, bool]:
+    """Resolve base-model structural flags, keeping historical auto defaults."""
+    prior_as_ot_target = (
+        args.use_base_prior_as_ot_target
+        if args.use_base_prior_as_ot_target is not None
+        else args.topo_mode == "all"
+    )
+    prior_align_loss = (
+        args.use_base_prior_align_loss
+        if args.use_base_prior_align_loss is not None
+        else args.topo_mode == "all"
+    )
+    global_topo_loss = (
+        args.use_base_global_topo_loss
+        if args.use_base_global_topo_loss is not None
+        else args.topo_mode == "all"
+    )
+    return {
+        "use_ot": bool(args.use_base_ot),
+        "use_ot_fusion": bool(args.use_base_ot_fusion),
+        "use_prior_as_ot_target": bool(prior_as_ot_target),
+        "use_topological_loss": bool(args.use_base_topological_loss),
+        "use_prior_align_loss": bool(prior_align_loss),
+        "use_global_topo_loss": bool(global_topo_loss),
+        "use_patch_topo_loss": bool(args.use_base_patch_topo_loss),
+    }
+
+
 def apply_curriculum_schedule(model, epoch: int, args, base_cfg: Dict[str, object]):
     for key, value in base_cfg.items():
         setattr(model.config, key, value)
@@ -466,6 +494,15 @@ def main():
     p.add_argument("--output-dir", default="outputs/qwen3b_topo_adapter")
     p.add_argument("--llm-name-or-path", default="Qwen/Qwen2.5-3B-Instruct")
     p.add_argument("--topo-mode", choices=["tda_only","all"], default="tda_only")
+    p.add_argument("--visual-structural-mode", choices=["none", "tda_only", "all"], default="all")
+    p.add_argument("--use-global-structural-token", type=str2bool, default=True)
+    p.add_argument("--use-base-ot", type=str2bool, default=True)
+    p.add_argument("--use-base-ot-fusion", type=str2bool, default=True)
+    p.add_argument("--use-base-prior-as-ot-target", type=str2bool, default=None)
+    p.add_argument("--use-base-topological-loss", type=str2bool, default=True)
+    p.add_argument("--use-base-prior-align-loss", type=str2bool, default=None)
+    p.add_argument("--use-base-global-topo-loss", type=str2bool, default=None)
+    p.add_argument("--use-base-patch-topo-loss", type=str2bool, default=True)
     p.add_argument("--max-samples", type=int, default=None)
     p.add_argument("--val-max-samples", type=int, default=None)
     p.add_argument("--eval-samples", type=int, default=None)
@@ -512,13 +549,17 @@ def main():
 
     if args.mode == "eval":
         topo_dim = 36 if args.topo_mode == "tda_only" else 47
+        base_flags = resolve_base_structural_flags(args)
+        use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all"
         model=build_structural_generative_vqa(
             llm_name_or_path=args.llm_name_or_path, vision_pretrained=args.vision_pretrained, vision_backend=args.vision_backend,
             freeze_vision_backbone=args.freeze_vision_backbone, freeze_llm=True, use_lora=True, lora_r=16, lora_alpha=32,
-            lora_target_modules="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj", use_ot=True, use_ot_fusion=True,
-            use_prior_as_ot_target=(args.topo_mode=="all"), use_topological_loss=True, use_prior_align_loss=(args.topo_mode=="all"),
-            use_global_topo_loss=(args.topo_mode=="all"), use_patch_topo_loss=True, prior_loss_weight=0.05 if args.topo_mode=="all" else 0.0,
-            global_topo_loss_weight=0.01 if args.topo_mode=="all" else 0.0, patch_topo_loss_weight=0.005,
+            lora_target_modules="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj", visual_structural_mode=args.visual_structural_mode,
+            use_global_structural_token=use_global_token, use_ot=base_flags["use_ot"], use_ot_fusion=base_flags["use_ot_fusion"],
+            use_prior_as_ot_target=base_flags["use_prior_as_ot_target"], use_topological_loss=base_flags["use_topological_loss"],
+            use_prior_align_loss=base_flags["use_prior_align_loss"], use_global_topo_loss=base_flags["use_global_topo_loss"],
+            use_patch_topo_loss=base_flags["use_patch_topo_loss"], prior_loss_weight=0.05 if base_flags["use_prior_align_loss"] else 0.0,
+            global_topo_loss_weight=0.01 if base_flags["use_global_topo_loss"] else 0.0, patch_topo_loss_weight=0.005 if base_flags["use_patch_topo_loss"] else 0.0,
         ).to(device)
         if hasattr(model, "tokenizer"):
             model.tokenizer.padding_side = "left"
@@ -582,13 +623,17 @@ def main():
             print(f"No validation set configured: train={len(train_ds)} rows; val_ratio={args.val_ratio}")
 
     topo_dim = 36 if args.topo_mode == "tda_only" else 47  # 3*12 + (prior stats 3) + global 8
+    base_flags = resolve_base_structural_flags(args)
+    use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all"
     model=build_structural_generative_vqa(
         llm_name_or_path=args.llm_name_or_path, vision_pretrained=args.vision_pretrained, vision_backend=args.vision_backend,
         freeze_vision_backbone=args.freeze_vision_backbone, freeze_llm=True, use_lora=True, lora_r=16, lora_alpha=32,
-        lora_target_modules="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj", use_ot=True, use_ot_fusion=True,
-        use_prior_as_ot_target=(args.topo_mode=="all"), use_topological_loss=True, use_prior_align_loss=(args.topo_mode=="all"),
-        use_global_topo_loss=(args.topo_mode=="all"), use_patch_topo_loss=True, prior_loss_weight=0.05 if args.topo_mode=="all" else 0.0,
-        global_topo_loss_weight=0.01 if args.topo_mode=="all" else 0.0, patch_topo_loss_weight=0.005,
+        lora_target_modules="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj", visual_structural_mode=args.visual_structural_mode,
+        use_global_structural_token=use_global_token, use_ot=base_flags["use_ot"], use_ot_fusion=base_flags["use_ot_fusion"],
+        use_prior_as_ot_target=base_flags["use_prior_as_ot_target"], use_topological_loss=base_flags["use_topological_loss"],
+        use_prior_align_loss=base_flags["use_prior_align_loss"], use_global_topo_loss=base_flags["use_global_topo_loss"],
+        use_patch_topo_loss=base_flags["use_patch_topo_loss"], prior_loss_weight=0.05 if base_flags["use_prior_align_loss"] else 0.0,
+        global_topo_loss_weight=0.01 if base_flags["use_global_topo_loss"] else 0.0, patch_topo_loss_weight=0.005 if base_flags["use_patch_topo_loss"] else 0.0,
     ).to(device)
     wrappers=install_topo_adapters(model, topo_dim, args.bottleneck_dim, args.adapter_last_n_layers, args.adapter_every_n_layers)
     for wrapper in wrappers:
@@ -599,6 +644,9 @@ def main():
         "prior_loss_weight": model.config.prior_loss_weight,
         "global_topo_loss_weight": model.config.global_topo_loss_weight,
         "patch_topo_loss_weight": model.config.patch_topo_loss_weight,
+        "use_ot": model.config.use_ot,
+        "use_ot_fusion": model.config.use_ot_fusion,
+        "use_topological_loss": model.config.use_topological_loss,
         "use_prior_as_ot_target": model.config.use_prior_as_ot_target,
         "use_prior_align_loss": model.config.use_prior_align_loss,
         "use_global_topo_loss": model.config.use_global_topo_loss,
