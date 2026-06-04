@@ -643,7 +643,7 @@ def main():
     topo_dim = 36 if args.topo_mode == "tda_only" else 47  # 3*12 + (prior stats 3) + global 8
     zero_prior_mask, zero_global_features = resolve_feature_zeroing(args)
     base_flags = resolve_base_structural_flags(args)
-    use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all" and not zero_global_features
+    use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all"
     print(f"Effective structural zeroing: zero_prior_mask={zero_prior_mask}; zero_global_features={zero_global_features}; use_global_token={use_global_token}")
     model=build_structural_generative_vqa(
         llm_name_or_path=args.llm_name_or_path, vision_pretrained=args.vision_pretrained, vision_backend=args.vision_backend,
