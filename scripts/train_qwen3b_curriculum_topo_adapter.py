@@ -70,6 +70,7 @@ class DecoderLayerWithTopoAdapter(nn.Module):
     def __init__(self, base_layer: nn.Module, adapter: TopoAdapter):
         super().__init__()
         self.base_layer = base_layer
+        self.attention_type = getattr(base_layer, "attention_type", "full_attention")
         self.topo_adapter = adapter
         self.topo_condition: Optional[torch.Tensor] = None
 
@@ -172,31 +173,42 @@ def patch_model_forward(model, wrappers, mode: str):
     model.generate = types.MethodType(generate_with_topo, model)
 
 
-def batch_to_device(batch, device, topo_mode: str):
+def resolve_feature_zeroing(args) -> tuple[bool, bool]:
+    """Resolve effective prior/global zeroing while preserving historical topo_mode behavior."""
+    zero_prior_mask = args.zero_prior_mask if args.zero_prior_mask is not None else args.topo_mode == "tda_only"
+    zero_global_features = (
+        args.zero_global_features if args.zero_global_features is not None else args.topo_mode == "tda_only"
+    )
+    return bool(zero_prior_mask), bool(zero_global_features)
+
+
+def batch_to_device(batch, device, zero_prior_mask: bool = False, zero_global_features: bool = False):
     for key in ["image", "prior_mask", "topo_features", "global_features"]:
         batch[key] = batch[key].to(device)
-    if topo_mode == "tda_only":
+    if zero_prior_mask:
         batch["prior_mask"] = torch.zeros_like(batch["prior_mask"])
+    if zero_global_features:
         batch["global_features"] = torch.zeros_like(batch["global_features"])
     return batch
 
 
 def resolve_base_structural_flags(args) -> Dict[str, bool]:
     """Resolve base-model structural flags, keeping historical auto defaults."""
+    zero_prior_mask, zero_global_features = resolve_feature_zeroing(args)
     prior_as_ot_target = (
         args.use_base_prior_as_ot_target
         if args.use_base_prior_as_ot_target is not None
-        else args.topo_mode == "all"
+        else args.topo_mode == "all" and not zero_prior_mask
     )
     prior_align_loss = (
         args.use_base_prior_align_loss
         if args.use_base_prior_align_loss is not None
-        else args.topo_mode == "all"
+        else args.topo_mode == "all" and not zero_prior_mask
     )
     global_topo_loss = (
         args.use_base_global_topo_loss
         if args.use_base_global_topo_loss is not None
-        else args.topo_mode == "all"
+        else args.topo_mode == "all" and not zero_global_features
     )
     return {
         "use_ot": bool(args.use_base_ot),
@@ -227,11 +239,11 @@ def apply_curriculum_schedule(model, epoch: int, args, base_cfg: Dict[str, objec
     return warmup
 
 
-def run_epoch(model, loader, optimizer, device, epoch, train=True, grad_accum=1, scheduler=None, topo_mode="tda_only", wrappers=None, gate_loss_weight=0.0):
+def run_epoch(model, loader, optimizer, device, epoch, train=True, grad_accum=1, scheduler=None, zero_prior_mask=False, zero_global_features=False, wrappers=None, gate_loss_weight=0.0):
     model.train(train); totals = {"loss":0.0,"lm_loss":0.0,"ot_cost":0.0,"topological_loss":0.0,"gate_loss":0.0,"gate_mean":0.0}; steps=0
     iterator = tqdm(loader, desc=("Train" if train else "Eval") + f" epoch {epoch}")
     for batch in iterator:
-        batch = batch_to_device(batch, device, topo_mode)
+        batch = batch_to_device(batch, device, zero_prior_mask=zero_prior_mask, zero_global_features=zero_global_features)
         with torch.set_grad_enabled(train):
             out = model(image=batch["image"], prior_mask=batch["prior_mask"], topo_features=batch["topo_features"], global_features=batch["global_features"], question_text=batch["question_text"], answer_text=batch["answer_text"], return_diagnostics=True)
             loss = out["loss"]
@@ -363,11 +375,12 @@ def evaluate_model(model, args, device):
     loader = DataLoader(ds, batch_size=args.eval_batch_size, shuffle=False, num_workers=args.num_workers, collate_fn=medico_vqa_collate_fn)
     print(f"Eval dataset: {len(ds)} rows | batch_size={args.eval_batch_size} | batches={len(loader)}")
     model.eval()
+    zero_prior_mask, zero_global_features = resolve_feature_zeroing(args)
     num_predictions = 0
     pred_path = eval_dir / "predictions.jsonl"
     with pred_path.open("w", encoding="utf-8") as f:
         for batch in tqdm(loader, desc="Full eval"):
-            batch = batch_to_device(batch, device, args.topo_mode)
+            batch = batch_to_device(batch, device, zero_prior_mask=zero_prior_mask, zero_global_features=zero_global_features)
             preds = model.generate(
                 image=batch["image"],
                 prior_mask=batch["prior_mask"],
@@ -425,13 +438,14 @@ def generate_validation_metrics(model, loader, args, device, epoch: int, outdir:
     val_dir.mkdir(parents=True, exist_ok=True)
     pred_path = val_dir / "predictions.jsonl"
     model.eval()
+    zero_prior_mask, zero_global_features = resolve_feature_zeroing(args)
     predictions: List[str] = []
     references: List[str] = []
     num_predictions = 0
 
     with pred_path.open("w", encoding="utf-8") as f:
         for batch in tqdm(loader, desc=f"Val generation epoch {epoch}"):
-            batch = batch_to_device(batch, device, args.topo_mode)
+            batch = batch_to_device(batch, device, zero_prior_mask=zero_prior_mask, zero_global_features=zero_global_features)
             preds = model.generate(
                 image=batch["image"],
                 prior_mask=batch["prior_mask"],
@@ -495,6 +509,8 @@ def main():
     p.add_argument("--llm-name-or-path", default="Qwen/Qwen2.5-3B-Instruct")
     p.add_argument("--topo-mode", choices=["tda_only","all"], default="tda_only")
     p.add_argument("--visual-structural-mode", choices=["none", "tda_only", "all"], default="all")
+    p.add_argument("--zero-prior-mask", type=str2bool, default=None, help="Zero prior_mask before model forward/generation. Default preserves topo_mode behavior: true for tda_only, false for all.")
+    p.add_argument("--zero-global-features", type=str2bool, default=None, help="Zero global_features before model forward/generation. Default preserves topo_mode behavior: true for tda_only, false for all.")
     p.add_argument("--use-global-structural-token", type=str2bool, default=True)
     p.add_argument("--use-base-ot", type=str2bool, default=True)
     p.add_argument("--use-base-ot-fusion", type=str2bool, default=True)
@@ -549,8 +565,10 @@ def main():
 
     if args.mode == "eval":
         topo_dim = 36 if args.topo_mode == "tda_only" else 47
+        zero_prior_mask, zero_global_features = resolve_feature_zeroing(args)
         base_flags = resolve_base_structural_flags(args)
         use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all"
+        print(f"Effective structural zeroing: zero_prior_mask={zero_prior_mask}; zero_global_features={zero_global_features}; use_global_token={use_global_token}")
         model=build_structural_generative_vqa(
             llm_name_or_path=args.llm_name_or_path, vision_pretrained=args.vision_pretrained, vision_backend=args.vision_backend,
             freeze_vision_backbone=args.freeze_vision_backbone, freeze_llm=True, use_lora=True, lora_r=16, lora_alpha=32,
@@ -623,8 +641,10 @@ def main():
             print(f"No validation set configured: train={len(train_ds)} rows; val_ratio={args.val_ratio}")
 
     topo_dim = 36 if args.topo_mode == "tda_only" else 47  # 3*12 + (prior stats 3) + global 8
+    zero_prior_mask, zero_global_features = resolve_feature_zeroing(args)
     base_flags = resolve_base_structural_flags(args)
-    use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all"
+    use_global_token = args.use_global_structural_token and args.visual_structural_mode == "all" and not zero_global_features
+    print(f"Effective structural zeroing: zero_prior_mask={zero_prior_mask}; zero_global_features={zero_global_features}; use_global_token={use_global_token}")
     model=build_structural_generative_vqa(
         llm_name_or_path=args.llm_name_or_path, vision_pretrained=args.vision_pretrained, vision_backend=args.vision_backend,
         freeze_vision_backbone=args.freeze_vision_backbone, freeze_llm=True, use_lora=True, lora_r=16, lora_alpha=32,
@@ -682,8 +702,8 @@ def main():
         for ep in range(start_epoch,args.epochs+1):
             warmup_active = apply_curriculum_schedule(model, ep, args, base_cfg)
             print(f"Epoch {ep}: curriculum_warmup_active={warmup_active}; gate_loss_weight={args.gate_loss_weight}")
-            t0=time.time(); train_m=run_epoch(model,train_loader,opt,device,ep,True,args.gradient_accumulation_steps,sched,args.topo_mode,wrappers,args.gate_loss_weight)
-            val_m=run_epoch(model,val_loader,opt,device,ep,False,1,None,args.topo_mode,wrappers,0.0) if val_loader else {}
+            t0=time.time(); train_m=run_epoch(model,train_loader,opt,device,ep,True,args.gradient_accumulation_steps,sched,zero_prior_mask,zero_global_features,wrappers,args.gate_loss_weight)
+            val_m=run_epoch(model,val_loader,opt,device,ep,False,1,None,zero_prior_mask,zero_global_features,wrappers,0.0) if val_loader else {}
             val_gen_m=generate_validation_metrics(model,val_generation_loader,args,device,ep,outdir) if val_generation_loader else {}
             preview=preview_generation(model,train_loader,device)
             val_score = validation_selection_score(val_gen_m, args.val_selection_metric) if val_gen_m else None
