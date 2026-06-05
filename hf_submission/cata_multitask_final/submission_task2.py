@@ -12,14 +12,13 @@ SUBMISSION_INFO = {
     "Team_Name": "Sweet&Sour",
     "Country": "Vietnam",
     "Notes_to_organizers": """
-    Uses CATA-Final, the selected Task 1 CATA model initialized from
-    qwen3b_curriculum_topo_adapter_full_full_continue and fine-tuned for one
-    additional epoch on the released test split under the organizers' permitted
-    setting. Task 2 answers are intended to match the CATA-Final Task 1
-    predictions for the same Subtask 2 validation items. Explanations combine
-    targeted self-probing, freshly regenerated lesion-prior and morphology/TDA
-    heatmaps, structured evidence JSON, and reliability-style confidence
-    estimates. Test-set fine-tuning is disclosed separately from the clean
-    training-only CATA checkpoint.
+    Uses CATA-Final, the selected Task 1 CATA architecture:
+    Qwen2.5-3B-Instruct + QLoRA r16 + pretrained frozen ViT/timm visual encoder
+    + TDA visual fusion + gated TDA TopoAdapter injected into the last
+    8 Qwen decoder layers. Task 2 answers are
+    intended to match the CATA-Final Task 1 predictions for the same Subtask 2
+    validation items. Explanations combine targeted self-probing, freshly
+    regenerated morphology/TDA + color/edge heatmaps, structured evidence JSON,
+    artifact-burden checks, and reliability-style confidence estimates.
     """,
 }

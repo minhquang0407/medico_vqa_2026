@@ -52,7 +52,8 @@ predictions = []  # List to store predictions
 
 gpu_name = torch.cuda.get_device_name(
     0) if torch.cuda.is_available() else "cpu"
-device = "cuda" if torch.cuda.is_available() else "cpu"
+_DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = _DEVICE
 
 
 def get_mem(): return torch.cuda.memory_allocated(device) / \
@@ -70,9 +71,12 @@ SUBMISSION_INFO = {
     "Team_Name": "Sweet&Sour",
     "Country": "Vietnam",
     "Notes_to_organizers": '''
-        Task 1 submission using Qwen2.5-3B-Instruct + QLoRA r16 + Curriculum-Gated full structural Deep TopoAdapter.
-        Trained for 2 epochs on 30k with warmup/gate regularization then 1 epoch full-data continuation.
-        Uses exact batched required template structure.
+        Task 1 submission using CATA-Final:
+        Qwen2.5-3B-Instruct + QLoRA r16 + pretrained frozen ViT/timm visual encoder
+        + patch-level TDA visual fusion + gated TDA TopoAdapter in the last 8 Qwen layers.
+        OT routing, prior-guided OT fusion, prior-alignment loss, and global structural token are disabled.
+        The lesion-prior tensor is still extracted only to satisfy the common model call signature; D1 does not route it into the model. 
+	Train 3 Epoch with 100% training data and 1 Epoch in Full Test data
         '''
 }
 
@@ -81,7 +85,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
 REPO_DIR = Path(__file__).resolve().parent
-HF_REPO_ID = "minhquang47/medico2026-task1-cata-qwen3b"
+HF_REPO_ID = "minhquang47/medico-mediaeval2026-cata-qwen3b"
 
 if str(REPO_DIR) not in sys.path:
     sys.path.insert(0, str(REPO_DIR))
@@ -135,6 +139,42 @@ DEFAULT_IMAGE_SIZE = (224, 224)
 DEFAULT_GRID_SIZE = (14, 14)
 DEFAULT_TOPO_FEATURE_DIM = 12
 DEFAULT_GLOBAL_FEATURE_DIM = 8
+
+D1_MODEL_OVERRIDES = {
+    "use_ot": False,
+    "use_ot_fusion": False,
+    "use_prior_as_ot_target": False,
+    "use_prior_align_loss": False,
+    "use_global_topo_loss": False,
+    "use_patch_topo_loss": True,
+    "visual_structural_mode": "tda_only",
+    "use_global_structural_token": False,
+    "topo_mode": "tda_only",
+}
+D1_INACTIVE_TRAINABLE_KEYWORDS = (
+    "ot_visual_projector",
+    "ot_text_projector",
+    "global_topo_head",
+    "vision_encoder.global_projector",
+)
+D1_CRITICAL_CHECKPOINT_KEYWORDS = (
+    "lora_",
+    "vision_encoder.fusion.topo_projector",
+    "vision_encoder.fusion.topo_gate",
+    "topo_adapter",
+    "patch_topo_head",
+)
+
+
+def _is_d1_critical_missing_key(key: str) -> bool:
+    if any(word in key for word in D1_INACTIVE_TRAINABLE_KEYWORDS):
+        return False
+    return (
+        "lora_" in key
+        or key.startswith("visual_projector.")
+        or ".visual_projector." in key
+        or any(word in key for word in D1_CRITICAL_CHECKPOINT_KEYWORDS)
+    )
 
 
 class TopoAdapter(torch.nn.Module):
@@ -329,16 +369,18 @@ def _safe_load_checkpoint(checkpoint_path: Path) -> Dict[str, Any]:
                 "lora_alpha": 32,
                 "lora_dropout": 0.05,
                 "lora_target_modules": "q_proj,v_proj",
-                "use_ot": True,
-                "use_ot_fusion": True,
-                "ot_fusion_mode": "prefix",
+                "use_ot": False,
+                "use_ot_fusion": False,
+                "ot_fusion_mode": "none",
                 "ot_fusion_dropout": 0.10,
-                "use_prior_as_ot_target": True,
+                "use_prior_as_ot_target": False,
                 "use_topological_loss": True,
-                "use_prior_align_loss": True,
-                "use_global_topo_loss": True,
+                "use_prior_align_loss": False,
+                "use_global_topo_loss": False,
                 "use_patch_topo_loss": True,
-                "topo_mode": "all",
+                "visual_structural_mode": "tda_only",
+                "use_global_structural_token": False,
+                "topo_mode": "tda_only",
                 "vision_pretrained": True,
                 "freeze_vision_backbone": True,
             },
@@ -371,10 +413,15 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
                 "lora_target_modules",
                 "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
             ),
-            "use_prior_as_ot_target": train_args.get("use_prior_as_ot_target", True),
-            "use_prior_align_loss": train_args.get("use_prior_align_loss", True),
-            "use_global_topo_loss": train_args.get("use_global_topo_loss", True),
-            "use_patch_topo_loss": train_args.get("use_patch_topo_loss", True),
+            "use_prior_as_ot_target": False,
+            "use_prior_align_loss": False,
+            "use_global_topo_loss": False,
+            "use_patch_topo_loss": True,
+            "use_ot": False,
+            "use_ot_fusion": False,
+            "ot_fusion_mode": "none",
+            "visual_structural_mode": "tda_only",
+            "use_global_structural_token": False,
         }
     )
     allowed = {
@@ -401,12 +448,13 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
         "use_prior_align_loss",
         "use_global_topo_loss",
         "use_patch_topo_loss",
-        "prior_loss_weight",
-        "global_topo_loss_weight",
         "patch_topo_loss_weight",
+        "visual_structural_mode",
+        "use_global_structural_token",
     }
+    config.update(D1_MODEL_OVERRIDES)
     build_kwargs = {key: value for key, value in config.items() if key in allowed}
-    topo_mode = train_args.get("topo_mode", "all")
+    topo_mode = D1_MODEL_OVERRIDES["topo_mode"]
     topo_dim = 36 if topo_mode == "tda_only" else 47
     bottleneck_dim = int(train_args.get("bottleneck_dim", train_args.get("adapter_bottleneck_dim", 32)))
     last_n_layers = int(train_args.get("adapter_last_n_layers", 8))
@@ -414,6 +462,9 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
     print(
         "Runtime config: "
         f"topo_mode={topo_mode} topo_dim={topo_dim} "
+        f"visual_structural_mode={build_kwargs.get('visual_structural_mode')} "
+        f"use_global_structural_token={build_kwargs.get('use_global_structural_token')} "
+        f"use_ot={build_kwargs.get('use_ot')} use_ot_fusion={build_kwargs.get('use_ot_fusion')} "
         f"vision_pretrained={build_kwargs.get('vision_pretrained')} "
         f"use_patch_topo_loss={build_kwargs.get('use_patch_topo_loss')}"
     )
@@ -431,16 +482,7 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
     _patch_model_generate_with_topo(model, wrappers, mode=topo_mode)
     state = checkpoint.get("model_state_dict", checkpoint)
     missing, unexpected = model.load_state_dict(state, strict=False)
-    critical_keywords = (
-        "lora_",
-        "visual_projector",
-        "ot_visual_projector",
-        "ot_text_projector",
-        "topo_adapter",
-        "global_topo_head",
-        "patch_topo_head",
-    )
-    critical_missing = [key for key in missing if any(word in key for word in critical_keywords)]
+    critical_missing = [key for key in missing if _is_d1_critical_missing_key(key)]
     unexpected_topo = [key for key in unexpected if "topo_adapter" in key]
     if any("topo_adapter" in key for key in critical_missing) and unexpected_topo:
         remapped_state = dict(state)
@@ -453,12 +495,14 @@ def _load_model_from_checkpoint(checkpoint_path: Path, device: torch.device):
                 if key.startswith(old_prefix):
                     remapped_state[new_prefix + key[len(old_prefix):]] = value
         missing, unexpected = model.load_state_dict(remapped_state, strict=False)
-        critical_missing = [key for key in missing if any(word in key for word in critical_keywords)]
+        critical_missing = [key for key in missing if _is_d1_critical_missing_key(key)]
 
     # Detailed trainable validation
     trainable_missing = [
         name for name, param in model.named_parameters()
-        if param.requires_grad and name in missing
+        if param.requires_grad
+        and name in missing
+        and not any(word in name for word in D1_INACTIVE_TRAINABLE_KEYWORDS)
     ]
     
     print("\n" + "="*50)

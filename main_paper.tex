@@ -18,59 +18,54 @@ Independent}
 \maketitle
 
 \begin{abstract}
-Bài báo này mô tả hệ thống CATA (Clinical-Aware Topological Adaptation) được phát triển cho MediaEval Medico VQA 2026. CATA là một mô hình hỏi đáp trực quan y khoa dạng sinh văn bản cho ảnh nội soi tiêu hóa, kết hợp bộ mã hóa ảnh ViT/timm pretrained được đóng băng, mô hình ngôn ngữ Qwen2.5-3B-Instruct được tinh chỉnh bằng LoRA, đặc trưng cấu trúc từ lesion prior, morphology và TDA, cùng cơ chế căn chỉnh đa phương thức dựa trên Sinkhorn Optimal Transport. Thành phần chính của hệ thống là TopoAdapter, một adapter cổ chai có cổng điều kiện topo được chèn vào các tầng decoder cuối của LLM để điều biến trạng thái ẩn bằng tín hiệu cấu trúc. Trên tập đánh giá 1,500 mẫu theo template chính thức, CATA-Final đạt BLEU 0.4728, ROUGE-L 0.6913 và METEOR 0.6895. Với Task 2, hệ thống tạo giải thích văn bản, heatmap, evidence JSON và confidence kiểu reliability-style phục vụ đánh giá lâm sàng.
+Bài báo này mô tả hệ thống CATA (Clinical-Aware Topological Adaptation) cho MediaEval Medico VQA 2026. Phiên bản final của CATA là một mô hình hỏi đáp trực quan y khoa dạng sinh văn bản cho ảnh nội soi tiêu hóa, kết hợp bộ mã hóa ảnh ViT/timm pretrained được đóng băng, Qwen2.5-3B-Instruct được tinh chỉnh bằng QLoRA, Visual TDA fusion ở nhánh ảnh và gated TDA Adapter trong các tầng decoder cuối của LLM. Hệ thống final tập trung vào descriptor TDA theo patch, dùng để điều kiện hóa visual fusion và adapter trong LLM. Trên tập full-test 15,955 mẫu, CATA Epoch 5 đạt BLEU 0.4727, ROUGE-L 0.6884, METEOR 0.6927 và BERTScore-F1 0.9580; phiên bản test-adapt đạt BLEU 0.4771, ROUGE-L 0.6914, METEOR 0.6954 và BERTScore-F1 0.9582. Với Task 2, hệ thống tạo câu trả lời, targeted self-probes, heatmap, evidence JSON, textual explanation và reliability-style confidence phục vụ rà soát lâm sàng.
 \end{abstract}
 
 \section{Giới thiệu}
 
-Medical Visual Question Answering (Medical VQA) yêu cầu mô hình trả lời câu hỏi bằng ngôn ngữ tự nhiên dựa trên ảnh y khoa. Trong ngữ cảnh nội soi tiêu hóa, bài toán này đặc biệt khó vì bằng chứng thị giác thường nhỏ, mờ, chịu ảnh hưởng của ánh sáng phản chiếu, biến dạng hình học và các cấu trúc niêm mạc phức tạp. Các mô hình vision-language hiện đại có thể tận dụng Vision Transformer (ViT) và Large Language Model (LLM), nhưng đặc trưng ảnh thuần túy không phải lúc nào cũng biểu diễn đầy đủ các tín hiệu hình thái như vùng tổn thương, tính liên thông, độ tập trung của bất thường hay cấu trúc topo cục bộ.
+Medical Visual Question Answering (Medical VQA) yêu cầu mô hình trả lời câu hỏi bằng ngôn ngữ tự nhiên dựa trên ảnh y khoa. Trong ngữ cảnh nội soi tiêu hóa, bài toán này đặc biệt khó vì bằng chứng thị giác thường nhỏ, mờ, chịu ảnh hưởng của ánh sáng phản chiếu, biến dạng hình học và các cấu trúc niêm mạc phức tạp. Các mô hình vision-language hiện đại có thể tận dụng Vision Transformer (ViT) và Large Language Model (LLM), nhưng embedding ảnh thuần túy không phải lúc nào cũng nhấn mạnh đủ các vùng có hình thái bất thường.
 
-Chúng tôi đề xuất CATA, một hệ thống VQA sinh văn bản có nhận thức cấu trúc. Thay vì chỉ đưa embedding ảnh vào LLM, CATA bổ sung các tín hiệu cấu trúc được trích xuất từ ảnh nội soi: lesion prior mask, đặc trưng TDA theo patch, và vector morphology toàn cục. Các tín hiệu này được dùng trong hai vị trí: căn chỉnh visual prefix bằng Optimal Transport và điều kiện hóa decoder LLM thông qua TopoAdapter.
+Chúng tôi đề xuất CATA, một hệ thống VQA sinh văn bản kết hợp Visual TDA fusion và gated TDA Adapter. Thay vì đưa thêm nhiều loại tín hiệu cấu trúc vào mô hình, phiên bản final chỉ giữ lại TDA theo patch. Tín hiệu này được dùng ở hai vị trí: nhánh visual fusion để bổ sung thông tin topo cục bộ cho token ảnh, và adapter trong các tầng decoder cuối của LLM để điều biến quá trình sinh câu trả lời.
 
 Đóng góp chính của hệ thống gồm:
 \begin{itemize}
-    \item Một pipeline VQA sinh văn bản kết hợp ViT/timm pretrained, Qwen2.5-3B-Instruct và LoRA cho ảnh nội soi tiêu hóa.
-    \item Cơ chế prior-guided Optimal Transport nhằm khuyến khích visual prefix tập trung vào các vùng có lesion prior.
-    \item TopoAdapter, một adapter residual có cổng điều kiện topo được chèn vào các tầng decoder cuối của LLM.
-    \item Pipeline giải thích cho Task 2 gồm self-probing, heatmap, evidence JSON và confidence kiểu reliability-style.
+    \item Một pipeline VQA sinh văn bản kết hợp ViT/timm pretrained, Qwen2.5-3B-Instruct và QLoRA cho ảnh nội soi tiêu hóa.
+    \item Visual TDA fusion, giúp nhánh ảnh kết hợp embedding RGB với descriptor TDA theo patch.
+    \item Gated TDA Adapter, một adapter residual được chèn vào 8 tầng decoder cuối của Qwen để điều kiện hóa trạng thái ẩn bằng tín hiệu TDA.
+    \item Pipeline giải thích cho Task 2 gồm targeted self-probing, heatmap, evidence JSON, textual explanation và confidence kiểu reliability-style.
 \end{itemize}
 
 \section{Phương pháp}
 
 \subsection{Tổng quan hệ thống}
 
-Với ảnh đầu vào $I$ và câu hỏi $q$, CATA tạo câu trả lời $y$ bằng một mô hình sinh văn bản đa phương thức. Ảnh được mã hóa bằng ViT/timm pretrained, trong khi câu hỏi và câu trả lời được xử lý bởi Qwen2.5-3B-Instruct. Mô hình ngôn ngữ được đóng băng phần lớn và chỉ tinh chỉnh các tham số LoRA cùng các thành phần adapter/fusion cần thiết.
+Với ảnh đầu vào $I$ và câu hỏi $q$, CATA tạo câu trả lời $y$ bằng một mô hình sinh văn bản đa phương thức. Ảnh được mã hóa bằng ViT/timm pretrained, trong khi câu hỏi và câu trả lời được xử lý bởi Qwen2.5-3B-Instruct. Mô hình ngôn ngữ được đóng băng phần lớn và chỉ tinh chỉnh các tham số QLoRA cùng các thành phần TDA fusion/adapters cần thiết.
 
-Song song với đặc trưng RGB, hệ thống tải hoặc tính trước các đặc trưng cấu trúc:
-\begin{itemize}
-    \item lesion prior mask $M \in \mathbb{R}^{14 \times 14}$,
-    \item patch-level topology features $T \in \mathbb{R}^{14 \times 14 \times C}$ với $C=12$,
-    \item global morphology features $f_{global} \in \mathbb{R}^{8}$.
-\end{itemize}
-
-Các tín hiệu này được dùng để xây dựng vector điều kiện topo $z$, đồng thời hỗ trợ căn chỉnh visual-textual prefix.
-
-\subsection{Đặc trưng cấu trúc}
-
-Lesion prior mask biểu diễn phân bố không gian mềm của các vùng nghi ngờ bất thường trong ảnh. Patch-level TDA features mô tả cấu trúc cục bộ của từng vùng ảnh, bao gồm các thống kê liên quan đến hình thái và topo. Global morphology features tóm tắt thông tin hình thái toàn ảnh. Trong CATA, các đặc trưng này không thay thế ViT embedding, mà đóng vai trò tín hiệu bổ sung để mô hình có thêm ngữ cảnh cấu trúc khi sinh câu trả lời.
-
-Vector topo condition được xây dựng bằng cách tổng hợp thống kê mean, standard deviation và max của patch-level topology features, kết hợp với thống kê của lesion prior và global morphology:
+Trong phiên bản final, CATA sử dụng descriptor TDA theo patch:
 \begin{equation}
-\mathbf{z} = [\mu(T), \sigma(T), \max(T), \mu(M), \sigma(M), \max(M), f_{global}].
+T \in \mathbb{R}^{14 \times 14 \times C}, \quad C=12.
 \end{equation}
-Với $C=12$ và $\dim(f_{global})=8$, vector điều kiện có kích thước $3C+3+8=47$.
+Descriptor này được tính trên lưới patch của ảnh đã resize. Các descriptor TDA được đưa vào nhánh visual fusion và được tổng hợp thành vector điều kiện cho adapter trong LLM.
 
-\subsection{Prior-guided Optimal Transport Fusion}
+\subsection{Visual TDA Fusion}
 
-CATA sử dụng Sinkhorn Optimal Transport để khuyến khích quá trình fusion ưu tiên các vùng ảnh có liên quan lâm sàng. Thay vì diễn giải visual prefix như một tập token đồng đều, lesion prior được dùng như một phân bố không gian tham chiếu. Bài toán OT có dạng:
+Visual TDA fusion kết hợp token ảnh từ ViT với descriptor TDA theo patch. Với visual token $v_i$ và descriptor TDA tương ứng $t_i$, nhánh fusion học một phép chiếu TDA và một cổng mềm:
+\begin{align}
+\tilde{t}_i &= W_t t_i, \\
+\alpha_i &= \sigma(W_g [v_i; \tilde{t}_i]), \\
+\hat{v}_i &= v_i + \alpha_i \odot \tilde{t}_i.
+\end{align}
+
+Thiết kế này giữ ViT embedding làm nguồn thông tin chính, trong khi TDA đóng vai trò hiệu chỉnh cục bộ. Vì fusion là residual và có gate, mô hình có thể học khi nào nên sử dụng tín hiệu TDA và khi nào nên dựa chủ yếu vào biểu diễn ảnh gốc.
+
+\subsection{Gated TDA Adapter}
+
+Gated TDA Adapter là thành phần chính để đưa TDA vào LLM. Từ descriptor TDA theo patch, CATA tạo vector điều kiện bằng cách tổng hợp các thống kê mean, standard deviation và max:
 \begin{equation}
-\mathcal{L}_{OT} = \min_{P \in U(a,b)} \langle P, C \rangle + \epsilon \sum_{ij} P_{ij}(\log P_{ij}-1),
+\mathbf{z} = [\mu(T), \sigma(T), \max(T)] \in \mathbb{R}^{36}.
 \end{equation}
-trong đó $a$ là phân bố token/visual features, $b$ là phân bố lesion prior, $C$ là ma trận chi phí, và $P$ là transport plan. Thành phần này không ép cứng attention của LLM, mà đóng vai trò regularizer/căn chỉnh giúp visual prefix thiên về vùng tổn thương hơn.
 
-\subsection{TopoAdapter}
-
-TopoAdapter là thành phần chính của CATA. Adapter này được chèn vào các tầng decoder cuối của Qwen và nhận vector điều kiện topo $z$. Với trạng thái ẩn $h_l$ tại tầng decoder $l$, TopoAdapter tính:
+Adapter được chèn vào 8 decoder layers cuối của Qwen. Với trạng thái ẩn $h_l$ tại tầng decoder $l$, adapter tính:
 \begin{align}
 \mathbf{t} &= W_2\,\mathrm{SiLU}(W_1\mathbf{z}), \\
 \mathbf{g} &= \sigma(W_g\mathbf{t}), \\
@@ -78,90 +73,89 @@ TopoAdapter là thành phần chính của CATA. Adapter này được chèn và
 \mathbf{h}'_l &= \mathbf{h}_l + \Delta \mathbf{h}_l.
 \end{align}
 
-Ở đây $\mathbf{g}$ là cổng sigmoid điều khiển mức độ đóng góp của residual structural update. TopoAdapter không ghi đè trạng thái của LLM, mà điều biến nó bằng một hiệu chỉnh residual phụ thuộc cấu trúc. Trọng số $W_{up}$ được khởi tạo bằng 0, do đó adapter là một phép đồng nhất tại thời điểm chèn vào mô hình. Thiết kế này giúp giữ ổn định hành vi ban đầu của LLM và cho phép mô hình học dần các hiệu chỉnh cấu trúc trong quá trình fine-tuning.
+Ở đây $\mathbf{g}$ là cổng sigmoid điều khiển mức độ đóng góp của residual TDA update. Adapter không ghi đè trạng thái của LLM, mà điều biến nó bằng hiệu chỉnh residual phụ thuộc TDA. Trọng số $W_{up}$ được khởi tạo bằng 0, do đó adapter ban đầu gần như là phép đồng nhất. Điều này giúp ổn định quá trình chèn adapter vào LLM đã pretrained.
 
-Để cổng không bị luôn nằm ở vùng mơ hồ quanh 0.5, chúng tôi sử dụng regularization:
+\subsection{Huấn luyện}
+
+CATA tối ưu autoregressive cross-entropy loss cho câu trả lời sinh văn bản:
+\begin{equation}
+\mathcal{L}_{total} = \mathcal{L}_{CE} + \lambda_{gate}\mathcal{L}_{gate}.
+\end{equation}
+
+Gate regularization được dùng để tránh cổng adapter luôn nằm ở vùng mơ hồ quanh 0.5:
 \begin{equation}
 \mathcal{L}_{gate} = \frac{1}{N}\sum_{i=1}^{N} g_i(1-g_i).
 \end{equation}
-Thành phần này khuyến khích cổng trở nên quyết đoán hơn, nhưng không xem confidence là xác suất lâm sàng đã hiệu chỉnh.
 
-\subsection{Hàm mất mát và curriculum training}
-
-Mục tiêu huấn luyện tổng quát gồm loss sinh văn bản, loss căn chỉnh cấu trúc và regularization cho gate:
-\begin{equation}
-\mathcal{L}_{total} = \mathcal{L}_{CE} + \lambda_{OT}\mathcal{L}_{OT} + \lambda_{struct}\mathcal{L}_{struct} + \lambda_{gate}\mathcal{L}_{gate}.
-\end{equation}
-Trong đó $\mathcal{L}_{CE}$ là autoregressive cross-entropy loss cho câu trả lời, $\mathcal{L}_{OT}$ là loss căn chỉnh prior-guided OT, $\mathcal{L}_{struct}$ gom các ràng buộc phụ liên quan đến prior/global/patch topology, và $\mathcal{L}_{gate}$ là gate regularization.
-
-Quá trình huấn luyện dùng curriculum. Trong giai đoạn warmup, mô hình ưu tiên ổn định năng lực sinh văn bản; các loss căn chỉnh cấu trúc có thể được giảm hoặc tắt. Sau warmup, CATA bật đầy đủ các thành phần cấu trúc và TopoAdapter để học sự kết hợp giữa ngữ nghĩa câu hỏi, đặc trưng ảnh và tín hiệu topo.
+Mô hình sử dụng QLoRA rank 16, LoRA alpha 32, ViT/timm pretrained được đóng băng, Visual TDA fusion và TDA Adapter bottleneck dimension 32. Phiên bản final tiếp tục huấn luyện qua các checkpoint full epoch và một thiết lập test-adaptation được dùng riêng cho submission cuối.
 
 \section{Giải thích cho Task 2}
 
-Với Task 2, ngoài câu trả lời, hệ thống cần tạo giải thích. Pipeline của CATA gồm bốn phần:
+Với Task 2, ngoài câu trả lời, hệ thống cần tạo explanation package. Pipeline của CATA-Final gồm:
 \begin{itemize}
-    \item sinh câu trả lời chính bằng CATA-Final,
-    \item tạo các câu hỏi self-probing theo loại câu hỏi,
-    \item xây dựng textual explanation dựa trên câu trả lời chính, probe answers và bằng chứng thị giác,
-    \item tạo heatmap và evidence JSON từ lesion prior, morphology/TDA, màu sắc, cạnh và artifact suppression.
+    \item sinh câu trả lời chính bằng checkpoint CATA-Final,
+    \item tạo targeted self-probes theo loại câu hỏi, ví dụ text, instrument, count, color, location, procedure, size hoặc lesion,
+    \item tạo heatmap mới từ TDA saliency, tín hiệu màu/texture, cạnh ảnh và artifact suppression,
+    \item ghi evidence JSON gồm heatmap statistics, TDA saliency, redness/saturation, specular artifact fraction và các chỉ số hỗ trợ giải thích,
+    \item xây dựng textual explanation dựa trên câu trả lời chính, probe answers, visual evidence và mức độ đồng thuận,
+    \item sinh reliability-style confidence score.
 \end{itemize}
 
-Confidence score được xem là reliability-style estimate dựa trên độ mạnh của lesion prior, độ tập trung heatmap, tín hiệu morphology/TDA, artifact burden và mức độ đồng thuận giữa câu trả lời chính với self-probes. Nó không phải xác suất lâm sàng đã calibration.
+Textual explanation của Task 2 có dạng clinician-oriented: nó nêu câu trả lời của CATA-Final, mô tả vùng heatmap được làm nổi bật, tóm tắt kết quả targeted self-probes và cảnh báo khi probes mâu thuẫn với câu trả lời chính. Confidence score kết hợp TDA saliency, heatmap concentration, color/texture support, artifact burden, answer specificity và self-probe agreement. Điểm này không được diễn giải như xác suất lâm sàng đã calibration, mà chỉ là ước lượng độ tin cậy phục vụ rà soát.
 
 \section{Thí nghiệm}
 
 \subsection{Dataset và metrics}
 
-Chúng tôi sử dụng Kvasir-VQA-x1 cho bài toán VQA trên ảnh nội soi. Task 1 đánh giá câu trả lời sinh văn bản bằng BLEU, ROUGE-1, ROUGE-2, ROUGE-L và METEOR. Task 2 sử dụng tập complexity-1 được shuffle với seed 42 và chọn 1,500 mẫu theo template của ban tổ chức.
+Chúng tôi sử dụng Kvasir-VQA-x1 cho bài toán VQA trên ảnh nội soi. Các kết quả ablation bên dưới được tính trên full-test gồm 15,955 mẫu. Metrics gồm BLEU, ROUGE-1, ROUGE-2, ROUGE-L, METEOR, chrF++ và BERTScore-F1. BERTScore được tính bằng model \texttt{roberta-large}.
 
 \subsection{Thiết lập mô hình}
 
-CATA sử dụng Qwen2.5-3B-Instruct làm LLM backbone, LoRA rank 16, LoRA alpha 32, ViT/timm pretrained làm vision encoder, TopoAdapter ở 8 decoder layers cuối, bottleneck dimension 32 và topo condition dimension 47. CATA-Clean được huấn luyện trên official training data. CATA-Final được tối ưu thêm theo thiết lập final submission được ban tổ chức cho phép.
+CATA sử dụng Qwen2.5-3B-Instruct làm LLM backbone, QLoRA rank 16, LoRA alpha 32, LoRA dropout 0.05, ViT/timm pretrained làm vision encoder, Visual TDA fusion ở nhánh ảnh, và gated TDA Adapter ở 8 decoder layers cuối. Topo condition dimension là 36 vì chỉ dùng thống kê TDA theo patch.
 
-\subsection{Kết quả Task 1}
+\subsection{Ablation Epoch 3}
 
 \begin{table}[h]
 \centering
-\caption{Kết quả Task 1 trên tập đánh giá 1,500 mẫu theo template chính thức.}
-\begin{tabular}{lccccc}
+\caption{Ablation ở full Epoch 3 trên full-test.}
+\begin{tabular}{lccccccc}
 \toprule
-Model & BLEU & ROUGE-1 & ROUGE-2 & ROUGE-L & METEOR \\
+Model & BLEU & ROUGE-1 & ROUGE-2 & ROUGE-L & METEOR & chrF++ & BERT-F1 \\
 \midrule
-CATA-Clean & 0.4537 & 0.6975 & 0.5105 & 0.6711 & 0.6748 \\
-CATA-Final & \textbf{0.4728} & \textbf{0.7185} & \textbf{0.5340} & \textbf{0.6913} & \textbf{0.6895} \\
+TDA Adapter only & 0.447315 & 0.701330 & 0.512962 & 0.673019 & 0.682814 & 0.647225 & 0.955968 \\
+Visual TDA + TDA Adapter & \textbf{0.451286} & \textbf{0.705618} & \textbf{0.518354} & \textbf{0.677250} & \textbf{0.686779} & \textbf{0.650793} & \textbf{0.956463} \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Kết quả cho thấy CATA-Final cải thiện tất cả metrics so với CATA-Clean. Tuy nhiên, khi báo cáo cần phân biệt rõ CATA-Clean là mô hình clean reportable được huấn luyện trên training data, còn CATA-Final là checkpoint final-submission dùng thiết lập tối ưu thêm được ban tổ chức cho phép.
+Kết quả Epoch 3 cho thấy việc bổ sung Visual TDA fusion lên TDA Adapter cải thiện đồng thời BLEU, ROUGE, METEOR, chrF++ và BERTScore-F1. Điều này ủng hộ việc giữ cả hai thành phần trong CATA-Final.
 
-\subsection{Ablation}
-
-Bảng ablation sẽ được hoàn thiện sau khi chạy đầy đủ các baseline. Các thí nghiệm quan trọng gồm Group A baseline (ViT pretrained + Qwen LoRA, không OT và không TopoAdapter), OT-only, TopoAdapter patch-only, CATA full, no-gate-loss và no-curriculum.
+\subsection{CATA Epoch 4, Epoch 5 và Test Adaptation}
 
 \begin{table}[h]
 \centering
-\caption{Ablation dự kiến cho CATA. Các giá trị TBD sẽ được điền sau khi chạy thực nghiệm.}
-\begin{tabular}{lccc}
+\caption{Tiến trình CATA final trên full-test.}
+\begin{tabular}{lccccccc}
 \toprule
-Variant & BLEU & ROUGE-L & METEOR \\
+Model & BLEU & ROUGE-1 & ROUGE-2 & ROUGE-L & METEOR & chrF++ & BERT-F1 \\
 \midrule
-Group A: ViT + Qwen LoRA & TBD & TBD & TBD \\
-OT-only & TBD & TBD & TBD \\
-TopoAdapter patch-only & TBD & TBD & TBD \\
-CATA-Clean full & 0.4537 & 0.6711 & 0.6748 \\
+CATA Epoch 4 & 0.472205 & 0.714941 & 0.531272 & 0.687860 & 0.692273 & 0.657217 & 0.957901 \\
+CATA Epoch 5 & 0.472700 & 0.715141 & 0.531963 & 0.688445 & 0.692699 & 0.657589 & 0.957953 \\
+CATA Epoch 5 + Test Adaptation & \textbf{0.477135} & \textbf{0.718074} & \textbf{0.535738} & \textbf{0.691376} & \textbf{0.695440} & \textbf{0.660629} & \textbf{0.958215} \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Epoch 4 đến Epoch 5 gần như bão hòa, với mức tăng nhỏ trên tất cả metrics. Test adaptation tạo bước tăng rõ hơn, đặc biệt trên BLEU, ROUGE-L, METEOR và chrF++. Vì vậy, CATA Epoch 5 là checkpoint clean train-only mạnh nhất, còn CATA Epoch 5 + Test Adaptation là cấu hình final-submission tốt nhất.
 
 \section{Thảo luận}
 
-CATA cho thấy hướng kết hợp đặc trưng cấu trúc với LLM sinh văn bản là phù hợp cho VQA nội soi. TopoAdapter cung cấp một cách nhẹ để đưa tín hiệu topo/morphology vào decoder mà không cần fine-tune toàn bộ LLM. Zero-initialized residual adapter giúp quá trình chèn adapter ổn định hơn. OT fusion hỗ trợ căn chỉnh visual prefix với lesion prior, trong khi self-probing giúp giải thích Task 2 thận trọng hơn khi các probe answers không đồng thuận.
+Các kết quả cho thấy CATA hoạt động tốt nhất khi chỉ giữ hai thành phần TDA cốt lõi: Visual TDA fusion và gated TDA Adapter. Visual TDA fusion giúp nhánh ảnh có thêm tín hiệu topo cục bộ, trong khi TDA Adapter đưa cùng tín hiệu này vào các tầng decoder cuối của LLM theo cách residual và có gate. Thiết kế này đơn giản hơn các biến thể trung gian nhưng ổn định hơn trong thực nghiệm full-test.
 
-Tuy vậy, hệ thống vẫn có các hạn chế. Confidence score chưa được calibration và không nên diễn giải như xác suất lâm sàng. Heatmap là visual evidence tổng hợp từ prior/TDA/morphology/artifact cues, không phải attention map thuần của LLM. Ngoài ra, self-probing vẫn phụ thuộc vào cùng mô hình nên có thể kế thừa bias của model chính. Các hạn chế này mở ra hướng nghiên cứu tiếp theo về ensemble, calibrated confidence và attention-prior alignment trực tiếp.
+Với Task 2, explanation package không được xem là bằng chứng chẩn đoán tự động. Heatmap là visual evidence tổng hợp từ TDA saliency, màu/texture, cạnh ảnh và artifact checks; nó không phải attention map thuần của LLM. Self-probing vẫn phụ thuộc vào cùng mô hình nên có thể kế thừa bias của model chính. Confidence score cũng chưa được calibration và chỉ nên dùng như tín hiệu hỗ trợ rà soát.
 
 \section{Kết luận}
 
-Bài báo trình bày CATA, một hệ thống generative medical VQA có nhận thức cấu trúc cho ảnh nội soi tiêu hóa. CATA kết hợp ViT pretrained, Qwen2.5-3B-Instruct, LoRA, prior-guided OT fusion và TopoAdapter để đưa tín hiệu lesion prior, topology và morphology vào quá trình sinh câu trả lời. Hệ thống đạt kết quả cạnh tranh trên Task 1 và tạo được explanation package cho Task 2 gồm textual explanation, heatmap, evidence JSON và reliability-style confidence. Trong tương lai, chúng tôi sẽ mở rộng CATA bằng ablation đầy đủ, uncertainty estimation và phiên bản CATA-v2 có supervised structural gating.
+Bài báo trình bày CATA, một hệ thống generative medical VQA cho ảnh nội soi tiêu hóa. Phiên bản final kết hợp ViT/timm pretrained, Qwen2.5-3B-Instruct, QLoRA, Visual TDA fusion và gated TDA Adapter. Việc loại bỏ các cơ chế phức tạp hơn và tập trung vào TDA theo patch giúp mô hình đạt kết quả mạnh trên full-test, đồng thời tạo được explanation package cho Task 2 gồm textual explanation, targeted self-probes, heatmap, evidence JSON và reliability-style confidence. Kết quả ablation xác nhận Visual TDA + TDA Adapter là cấu hình được chọn cho CATA-Final.
 
 \end{document}

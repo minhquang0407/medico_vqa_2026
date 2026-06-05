@@ -20,8 +20,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any, Dict, List
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.evaluation.generative_vqa_metrics import (
     aggregate_scores,
@@ -60,6 +65,7 @@ def main() -> None:
     parser.add_argument("--predictions", required=True, help="Path to predictions.jsonl")
     parser.add_argument("--output", default=None, help="Output metrics JSON path. Defaults to <predictions parent>/paper_metrics.json")
     parser.add_argument("--bertscore", action="store_true", help="Compute BERTScore-F1. This is slower and may download a model.")
+    parser.add_argument("--bertscore-only", action="store_true", help="Only compute BERTScore-F1 and merge with existing paper_metrics.json if available.")
     parser.add_argument("--bertscore-model", default="microsoft/deberta-xlarge-mnli")
     parser.add_argument("--bertscore-batch-size", type=int, default=16)
     parser.add_argument("--require-bertscore", action="store_true", help="Fail if BERTScore cannot be computed.")
@@ -73,18 +79,37 @@ def main() -> None:
     references = [row["ground_truth"] for row in rows]
     questions = [row["question"] for row in rows]
 
-    per_row = [score_prediction(p, r, q) for p, r, q in zip(predictions, references, questions)]
-    metrics = aggregate_scores(per_row)
-    metrics.update(
-        compute_corpus_generation_metrics(
-            predictions,
-            references,
-            compute_bertscore=args.bertscore,
-            bertscore_model=args.bertscore_model,
-            bertscore_batch_size=args.bertscore_batch_size,
-            require_bertscore=args.require_bertscore,
+    if args.bertscore_only:
+        existing_path = pred_path.parent / "paper_metrics.json"
+        if out_path.exists():
+            metrics = json.loads(out_path.read_text(encoding="utf-8"))
+        elif existing_path.exists():
+            metrics = json.loads(existing_path.read_text(encoding="utf-8"))
+        else:
+            metrics = {}
+        metrics.update(
+            compute_corpus_generation_metrics(
+                predictions,
+                references,
+                compute_bertscore=True,
+                bertscore_model=args.bertscore_model,
+                bertscore_batch_size=args.bertscore_batch_size,
+                require_bertscore=args.require_bertscore,
+            )
         )
-    )
+    else:
+        per_row = [score_prediction(p, r, q) for p, r, q in zip(predictions, references, questions)]
+        metrics = aggregate_scores(per_row)
+        metrics.update(
+            compute_corpus_generation_metrics(
+                predictions,
+                references,
+                compute_bertscore=args.bertscore,
+                bertscore_model=args.bertscore_model,
+                bertscore_batch_size=args.bertscore_batch_size,
+                require_bertscore=args.require_bertscore,
+            )
+        )
     metrics["num_examples"] = len(rows)
 
     out_path.write_text(json.dumps(metrics, ensure_ascii=False, indent=2), encoding="utf-8")

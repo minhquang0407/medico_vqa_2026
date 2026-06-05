@@ -67,6 +67,42 @@ DEFAULT_GRID_SIZE = (14, 14)
 DEFAULT_TOPO_FEATURE_DIM = 12
 DEFAULT_GLOBAL_FEATURE_DIM = 8
 
+D1_MODEL_OVERRIDES = {
+    "use_ot": False,
+    "use_ot_fusion": False,
+    "use_prior_as_ot_target": False,
+    "use_prior_align_loss": False,
+    "use_global_topo_loss": False,
+    "use_patch_topo_loss": True,
+    "visual_structural_mode": "tda_only",
+    "use_global_structural_token": False,
+    "topo_mode": "tda_only",
+}
+D1_CRITICAL_CHECKPOINT_KEYWORDS = (
+    "lora_",
+    "vision_encoder.fusion.topo_projector",
+    "vision_encoder.fusion.topo_gate",
+    "topo_adapter",
+    "patch_topo_head",
+)
+D1_INACTIVE_TRAINABLE_KEYWORDS = (
+    "ot_visual_projector",
+    "ot_text_projector",
+    "global_topo_head",
+    "vision_encoder.global_projector",
+)
+
+
+def _is_d1_critical_missing_key(key: str) -> bool:
+    if any(word in key for word in D1_INACTIVE_TRAINABLE_KEYWORDS):
+        return False
+    return (
+        "lora_" in key
+        or key.startswith("visual_projector.")
+        or ".visual_projector." in key
+        or any(word in key for word in D1_CRITICAL_CHECKPOINT_KEYWORDS)
+    )
+
 QUESTION_FAMILIES = {
     "visible_text": ["text", "label", "caption", "writing"],
     "instrument": ["instrument", "surgical", "tool", "forceps", "tube", "catheter", "foreign"],
@@ -269,27 +305,39 @@ def load_cata_model(checkpoint_path: Path, device: torch.device):
         "lora_alpha": train_args.get("lora_alpha", 32),
         "lora_dropout": train_args.get("lora_dropout", 0.05),
         "lora_target_modules": train_args.get("lora_target_modules", "q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj"),
-        "use_prior_as_ot_target": train_args.get("use_prior_as_ot_target", True),
-        "use_prior_align_loss": train_args.get("use_prior_align_loss", True),
-        "use_global_topo_loss": train_args.get("use_global_topo_loss", True),
-        "use_patch_topo_loss": train_args.get("use_patch_topo_loss", True),
+        "use_prior_as_ot_target": False,
+        "use_prior_align_loss": False,
+        "use_global_topo_loss": False,
+        "use_patch_topo_loss": True,
+        "use_ot": False,
+        "use_ot_fusion": False,
+        "ot_fusion_mode": "none",
+        "visual_structural_mode": "tda_only",
+        "use_global_structural_token": False,
     })
+    config.update(D1_MODEL_OVERRIDES)
     allowed = {
         "llm_name_or_path", "vision_pretrained", "vision_backend", "freeze_vision_backbone", "freeze_llm",
         "max_question_length", "max_answer_length", "use_lora", "lora_r", "lora_alpha", "lora_dropout",
         "lora_target_modules", "ot_loss_weight", "use_ot", "use_ot_fusion", "ot_fusion_mode", "ot_fusion_dropout",
         "use_prior_as_ot_target", "prior_ot_global_mass", "use_topological_loss", "use_prior_align_loss",
         "use_global_topo_loss", "use_patch_topo_loss", "prior_loss_weight", "global_topo_loss_weight",
-        "patch_topo_loss_weight",
+        "patch_topo_loss_weight", "visual_structural_mode", "use_global_structural_token",
     }
     build_kwargs = {k: v for k, v in config.items() if k in allowed}
-    topo_mode = train_args.get("topo_mode", "all")
+    topo_mode = D1_MODEL_OVERRIDES["topo_mode"]
     topo_dim = 36 if topo_mode == "tda_only" else 47
     bottleneck_dim = int(train_args.get("bottleneck_dim", train_args.get("adapter_bottleneck_dim", 32)))
     last_n_layers = int(train_args.get("adapter_last_n_layers", 8))
     every_n_layers = int(train_args.get("adapter_every_n_layers", 0))
-    print(f"Loading CATA: {checkpoint_path}")
-    print(f"Runtime: topo_mode={topo_mode} topo_dim={topo_dim} vision_pretrained={build_kwargs.get('vision_pretrained')}")
+    print(f"Loading CATA-Final / D1 Full: {checkpoint_path}")
+    print(
+        f"Runtime: topo_mode={topo_mode} topo_dim={topo_dim} "
+        f"visual_structural_mode={build_kwargs.get('visual_structural_mode')} "
+        f"use_global_structural_token={build_kwargs.get('use_global_structural_token')} "
+        f"use_ot={build_kwargs.get('use_ot')} use_ot_fusion={build_kwargs.get('use_ot_fusion')} "
+        f"vision_pretrained={build_kwargs.get('vision_pretrained')}"
+    )
     model = build_structural_generative_vqa(**build_kwargs).to(device)
     if hasattr(model, "tokenizer"):
         model.tokenizer.padding_side = "left"
@@ -299,9 +347,9 @@ def load_cata_model(checkpoint_path: Path, device: torch.device):
     _patch_generate_with_topo(model, wrappers, topo_mode)
     state = checkpoint.get("model_state_dict", checkpoint)
     missing, unexpected = model.load_state_dict(state, strict=False)
-    critical = [k for k in missing if any(w in k for w in ("lora_", "visual_projector", "ot_", "topo_adapter", "global_topo_head", "patch_topo_head"))]
+    critical = [k for k in missing if _is_d1_critical_missing_key(k)]
     if critical:
-        raise RuntimeError(f"Missing critical checkpoint keys: {critical[:20]}")
+        raise RuntimeError(f"Missing critical D1 checkpoint keys: {critical[:20]}")
     if unexpected:
         print(f"Warning unexpected keys: {unexpected[:10]}")
     model.eval()
@@ -376,12 +424,11 @@ def create_heatmap(image: Image.Image, structural: Dict[str, torch.Tensor], out_
     prior = structural["prior_mask"].squeeze(0).cpu().numpy()
     topo = structural["topo_features"].squeeze(0).cpu().numpy()
     topo_sal = normalize_map(np.linalg.norm(topo, axis=-1))
-    prior_up = cv2.resize(normalize_map(prior), DEFAULT_IMAGE_SIZE[::-1], interpolation=cv2.INTER_CUBIC)
     topo_up = cv2.resize(topo_sal, DEFAULT_IMAGE_SIZE[::-1], interpolation=cv2.INTER_CUBIC)
     color_sal = normalize_map(0.65 * red_like + 0.35 * saturation)
     edge_sal = normalize_map(edges)
     artifact_penalty = 1.0 - 0.55 * cv2.GaussianBlur(specular, (0, 0), 2.0)
-    heat = normalize_map((0.42 * prior_up + 0.28 * topo_up + 0.20 * color_sal + 0.10 * edge_sal) * artifact_penalty)
+    heat = normalize_map((0.48 * topo_up + 0.32 * color_sal + 0.20 * edge_sal) * artifact_penalty)
 
     heat_uint8 = np.uint8(np.clip(heat * 255.0, 0, 255))
     color = cv2.applyColorMap(heat_uint8, cv2.COLORMAP_TURBO)
@@ -435,11 +482,14 @@ def build_explanation(question: str, answer: str, family: str, probes: List[str]
 
     heat = float(evidence.get("heatmap_mean", 0.0))
     concentration = float(evidence.get("heatmap_concentration", 0.0))
-    prior = float(evidence.get("prior_mean", 0.0))
-    spec = float(evidence.get("specular_fraction", 0.0))
     topo = float(evidence.get("topo_saliency_mean", 0.0))
+    color_support = max(
+        float(evidence.get("redness_mean", 0.0)),
+        float(evidence.get("saturation_mean", 0.0)),
+    )
+    spec = float(evidence.get("specular_fraction", 0.0))
 
-    confidence = 0.50 + 0.18 * min(1.0, prior * 3.0) + 0.14 * min(1.0, topo * 2.5) + 0.10 * min(1.0, concentration * 8.0)
+    confidence = 0.50 + 0.22 * min(1.0, topo * 2.5) + 0.14 * min(1.0, concentration * 8.0) + 0.08 * min(1.0, color_support * 2.0)
     if probe_answers:
         confidence += 0.08 if not conflict else -0.12
     if neg_answer:
@@ -448,10 +498,10 @@ def build_explanation(question: str, answer: str, family: str, probes: List[str]
     confidence = float(np.clip(confidence, 0.05, 0.95))
 
     evidence_bits = []
-    if prior > 0.08:
-        evidence_bits.append("lesion-prior support")
     if topo > 0.12:
         evidence_bits.append("morphology/TDA structural support")
+    if color_support > 0.10:
+        evidence_bits.append("color and mucosal-texture support")
     if concentration > 0.03:
         evidence_bits.append("a relatively focal heatmap region")
     else:
@@ -476,8 +526,8 @@ def build_explanation(question: str, answer: str, family: str, probes: List[str]
         f"The CATA-Final model predicts \"{answer}\". "
         f"The newly generated visual explanation highlights {', '.join(evidence_bits)}. "
         f"{probe_sentence} "
-        f"Overall support is {support_phrase}; the reliability score combines lesion prior, morphology/TDA saliency, "
-        f"heatmap concentration, artifact burden, answer specificity, and self-probe agreement. "
+        f"Overall support is {support_phrase}; the reliability score combines morphology/TDA saliency, "
+        f"heatmap concentration, color/texture support, artifact burden, answer specificity, and self-probe agreement. "
         f"The original question was: {question}. "
         "This explanation is intended for clinician review and should be interpreted alongside the image rather than as a standalone diagnosis."
     )
@@ -534,7 +584,7 @@ def main():
             "pass outputs/<run>/checkpoints/last.pt explicitly."
         ),
     )
-    parser.add_argument("--output-jsonl", default="submission_task2_cata_final.jsonl")
+    parser.add_argument("--output-jsonl", default="submission_task2.jsonl")
     parser.add_argument("--visual-dir", default="visuals")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int, default=48)
@@ -612,7 +662,7 @@ def main():
                         {
                             "type": "heatmap",
                             "data": str(heatmap_path.relative_to(SCRIPT_DIR)).replace("\\", "/"),
-                            "description": "Fresh CATA-Final heatmap combining lesion prior, morphology/TDA saliency, color/edge evidence, and artifact suppression.",
+                            "description": "Fresh CATA-Final / D1 heatmap combining morphology/TDA saliency, color/edge evidence, and artifact suppression.",
                         },
                         {
                             "type": "evidence_json",

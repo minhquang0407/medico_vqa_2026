@@ -43,6 +43,8 @@ class StructuralGenerativeVQAConfig:
     patch_topo_loss_weight: float = 0.005
     topo_feature_dim: int = 12
     global_feature_dim: int = 8
+    visual_structural_mode: str = "all"
+    use_global_structural_token: bool = True
     max_question_length: int = 128
     max_answer_length: int = 128
     dropout: float = 0.10
@@ -52,6 +54,13 @@ class StructuralGenerativeVQAConfig:
             raise ValueError("prior_ot_global_mass phải nằm trong [0, 1)")
         if self.ot_fusion_mode not in {"none", "prefix"}:
             raise ValueError("ot_fusion_mode hiện chỉ hỗ trợ 'none' hoặc 'prefix'")
+        if self.visual_structural_mode not in {"none", "tda_only", "all"}:
+            raise ValueError("visual_structural_mode phải là 'none', 'tda_only', hoặc 'all'")
+        if self.visual_structural_mode in {"none", "tda_only"} and self.use_global_structural_token:
+            raise ValueError(
+                "use_global_structural_token phải là False khi visual_structural_mode "
+                "là 'none' hoặc 'tda_only' để tránh rò rỉ global structural token."
+            )
         if self.use_lora and (LoraConfig is None or get_peft_model is None):
             raise ImportError("use_lora=True nhưng chưa cài package 'peft'. Hãy chạy: pip install peft")
         if self.lora_r <= 0:
@@ -159,13 +168,11 @@ class StructuralGenerativeVQA(nn.Module):
         prior_mask = prior_mask.to(device=device, dtype=image.dtype)
         topo_features = topo_features.to(device=device, dtype=image.dtype)
         global_features = global_features.to(device=device, dtype=image.dtype)
-
-        vision_out = self.vision_encoder(
+        vision_out = self._encode_visual_context(
             image=image,
             prior_mask=prior_mask,
             topo_features=topo_features,
             global_features=global_features,
-            return_diagnostics=True,
         )
         visual_context = vision_out["visual_context"]
 
@@ -276,13 +283,11 @@ class StructuralGenerativeVQA(nn.Module):
         prior_mask = prior_mask.to(device=device, dtype=image.dtype)
         topo_features = topo_features.to(device=device, dtype=image.dtype)
         global_features = global_features.to(device=device, dtype=image.dtype)
-
-        vision_out = self.vision_encoder(
+        vision_out = self._encode_visual_context(
             image=image,
             prior_mask=prior_mask,
             topo_features=topo_features,
             global_features=global_features,
-            return_diagnostics=True,
         )
         visual_context = vision_out["visual_context"]
         prompt = self.tokenizer(
@@ -327,6 +332,55 @@ class StructuralGenerativeVQA(nn.Module):
         )
         decoded = self.tokenizer.batch_decode(generated, skip_special_tokens=True)
         return [text.strip() for text in decoded]
+
+    def _encode_visual_context(
+        self,
+        image: torch.Tensor,
+        prior_mask: torch.Tensor,
+        topo_features: torch.Tensor,
+        global_features: torch.Tensor,
+    ) -> Dict[str, torch.Tensor]:
+        """Encode visual tokens and optionally bypass post-ViT structural fusion."""
+        if self.config.visual_structural_mode == "none":
+            patch_tokens = self.vision_encoder.patch_encoder(image)
+            zero = patch_tokens.new_tensor(0.0)
+            return {
+                "visual_context": patch_tokens,
+                "patch_tokens": patch_tokens,
+                "fused_tokens": patch_tokens,
+                "global_token": None,
+                "prior_weights": None,
+                "topo_embedding": None,
+                "prior_gate": zero,
+                "topo_gate": zero,
+            }
+
+        vision_prior_mask, vision_topo_features, vision_global_features = self._prepare_visual_structural_inputs(
+            prior_mask=prior_mask,
+            topo_features=topo_features,
+            global_features=global_features,
+        )
+        return self.vision_encoder(
+            image=image,
+            prior_mask=vision_prior_mask,
+            topo_features=vision_topo_features,
+            global_features=vision_global_features,
+            return_diagnostics=True,
+        )
+
+    def _prepare_visual_structural_inputs(
+        self,
+        prior_mask: torch.Tensor,
+        topo_features: torch.Tensor,
+        global_features: torch.Tensor,
+    ):
+        """Route structural tensors into the post-ViT visual branch for clean ablations."""
+        mode = self.config.visual_structural_mode
+        if mode == "none":
+            return None, None, None
+        if mode == "tda_only":
+            return None, topo_features, None
+        return prior_mask, topo_features, global_features
 
     def _compute_ot(
         self,
@@ -453,5 +507,6 @@ def build_structural_generative_vqa(
         pretrained=vision_pretrained,
         backend=vision_backend,
         freeze_backbone=freeze_vision_backbone,
+        use_global_token=config.use_global_structural_token,
     )
     return StructuralGenerativeVQA(config=config, vision_encoder=vision_encoder)

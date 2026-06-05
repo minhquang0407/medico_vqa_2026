@@ -93,6 +93,7 @@ def compute_metrics(
     use_bertscore: bool = False,
     bertscore_model: str = "microsoft/deberta-xlarge-mnli",
     bertscore_batch_size: int = 16,
+    require_bertscore: bool = False,
 ) -> Dict[str, Any]:
     """Compute all metrics using the evaluate library (same pattern as submission_task1.py)."""
     # The evaluate library expects references as list of lists for bleu/meteor
@@ -164,6 +165,8 @@ def compute_metrics(
             results["bertscore_recall"] = round(float(sum(bertscore_result["recall"]) / len(bertscore_result["recall"])), 6)
             results["bertscore_model"] = bertscore_model
         except Exception as exc:
+            if require_bertscore:
+                raise
             results["bertscore_error"] = str(exc)
 
     return results
@@ -226,6 +229,12 @@ def main() -> None:
         type=int,
         default=16,
     )
+    parser.add_argument(
+        "--require-bertscore",
+        action="store_true",
+        default=False,
+        help="Fail instead of writing output if BERTScore cannot be computed.",
+    )
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -241,6 +250,7 @@ def main() -> None:
         use_bertscore=args.bertscore,
         bertscore_model=args.bertscore_model,
         bertscore_batch_size=args.bertscore_batch_size,
+        require_bertscore=args.require_bertscore,
     )
 
     print_table(metrics)
