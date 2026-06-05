@@ -1,261 +1,248 @@
-# CATA — Clinical-Aware Topological Adaptation for Medical VQA
+# CATA: Clinical-Aware Topological Adaptation for Generative Medical VQA
 
-**CATA** is a topology-aware multimodal generative VQA system for gastrointestinal
-endoscopy images. The project was developed for **MediaEval Medico VQA 2026** and
-focuses on combining modern vision-language modeling with clinically meaningful
-structural evidence.
+This repository contains the code, submission package, and paper draft for **CATA**,
+a generative medical visual question answering system developed for **MediaEval
+Medico VQA 2026**.
 
-Instead of relying only on image appearance, CATA augments a generative VQA model
-with lesion priors, morphology-aware features, topological descriptors, and
-lightweight decoder adapters that inject structural context into the language
-model during answer generation.
+CATA targets gastrointestinal endoscopy VQA. The system uses a frozen ViT/timm
+image encoder, Qwen2.5-3B-Instruct with QLoRA, **Visual TDA fusion**, and a
+**gated TDA Adapter** inserted into the last decoder layers of the language model.
 
----
+The final model is described as:
 
-## Why CATA?
-
-Medical VQA is different from generic visual question answering. Endoscopy
-questions often depend on small lesions, subtle mucosal texture, spatial
-localization, artifacts, and anatomical context. CATA is designed around this
-observation.
-
-The system combines:
-
-- **Pretrained visual understanding** from a frozen ViT/timm image encoder.
-- **Generative medical-language reasoning** from Qwen2.5-3B-Instruct with LoRA.
-- **Lesion-prior guidance** to focus on clinically relevant image regions.
-- **Topology and morphology features** to describe structural patterns beyond raw
-  RGB appearance.
-- **Optimal-transport visual-text fusion** for prior-guided multimodal alignment.
-- **TopoAdapter**, a lightweight topology-conditioned decoder adapter.
-- **Clinician-oriented explanations** with heatmaps, structured evidence, and
-  confidence estimates.
+```text
+CATA-Final = ViT/timm image encoder
+           + Qwen2.5-3B-Instruct with QLoRA
+           + Visual TDA fusion
+           + gated TDA Adapter
+           + patch-level TDA descriptors
+```
 
 ---
 
-## Key Results
+## Summary
 
-Evaluation on the official-template 1,500-sample test subset:
+Medical VQA for endoscopy is challenging because answers often depend on small
+lesions, mucosal texture, specular highlights, local shape, and subtle spatial
+patterns. CATA adds topology-aware cues to a strong generative VQA backbone by
+conditioning both the visual prefix and the LLM decoder on patch-level TDA
+features.
 
-| Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | METEOR |
-|---|---:|---:|---:|---:|---:|
-| CATA-Clean | 0.4537 | 0.6975 | 0.5105 | 0.6711 | 0.6748 |
-| CATA-Final | **0.4728** | **0.7185** | **0.5340** | **0.6913** | **0.6895** |
+The project includes:
 
-`CATA-Clean` is trained on the official training data only. `CATA-Final` is the
-final submission model using the organizer-permitted final optimization setting.
+- training and evaluation code for generative GI VQA,
+- CATA model code with Visual TDA fusion and TDA Adapter support,
+- scripts for paper-level metrics including BLEU, ROUGE, METEOR, chrF++, and
+  BERTScore,
+- a Hugging Face submission package for Task 1 and Task 2,
+- a Task 2 explanation pipeline with heatmaps, evidence JSON, textual
+  explanations, and reliability-style confidence scores.
 
 ---
 
 ## Architecture
 
 ```text
-              Endoscopy Image                         Question
-                    │                                    │
-                    ▼                                    ▼
-        ┌──────────────────────┐            ┌──────────────────────┐
-        │ Frozen ViT/timm       │            │ Qwen2.5-3B-Instruct  │
-        │ image encoder         │            │ + LoRA               │
-        └──────────┬───────────┘            └──────────┬───────────┘
-                   │                                   │
-                   ▼                                   │
-        Visual patch embeddings                        │
-                   │                                   │
-                   ▼                                   │
-        ┌──────────────────────┐                       │
-        │ Lesion prior +       │                       │
-        │ topology/morphology  │                       │
-        │ feature extraction   │                       │
-        └──────────┬───────────┘                       │
-                   │                                   │
-                   ▼                                   │
-        ┌──────────────────────┐                       │
-        │ Prior-guided optimal │                       │
-        │ transport fusion     │                       │
-        └──────────┬───────────┘                       │
-                   │                                   │
-                   └───────────────┬───────────────────┘
+Endoscopy image
+      │
+      ▼
+Frozen ViT/timm image encoder
+      │
+      ▼
+Visual patch tokens ───────────────┐
+      │                            │
+      ▼                            │
+Patch-level TDA descriptors         │
+      │                            │
+      ├──► Visual TDA fusion ──────┤
+      │                            ▼
+      └──► TDA condition vector ─► Qwen2.5-3B-Instruct + gated TDA Adapter
+                                   │
                                    ▼
-                  ┌────────────────────────────────────┐
-                  │ Qwen decoder + TopoAdapter layers │
-                  └────────────────┬───────────────────┘
-                                   ▼
-                            Generated Answer
+                             generated answer
 ```
+
+### Visual TDA Fusion
+
+Visual TDA fusion combines ViT visual tokens with patch-level TDA descriptors.
+The fusion is residual and gated, so the RGB visual representation remains the
+main signal while TDA provides local topology-aware corrections.
+
+### Gated TDA Adapter
+
+The TDA Adapter is inserted into the last 8 decoder layers of Qwen. It receives a
+compact TDA condition vector built from mean, standard deviation, and max pooling
+over patch-level TDA descriptors:
+
+```text
+z = [mean(T), std(T), max(T)]
+```
+
+With 12 TDA channels, the condition dimension is 36. The adapter uses a
+bottleneck residual update with a sigmoid gate. Its up-projection is initialized
+to zero, so the adapter starts as a no-op and learns TDA-conditioned corrections
+during fine-tuning.
 
 ---
 
-## TopoAdapter
+## Full-Test Results
 
-TopoAdapter is the main architectural contribution of this repository.
+The full-test evaluation uses 15,955 examples and paper-level metrics from
+`scripts/evaluate_paper_metrics.py`. BERTScore is computed with `roberta-large`.
 
-It is a **topology-conditioned gated bottleneck adapter** inserted into the final
-Qwen decoder layers. It receives a compact structural condition vector derived
-from lesion priors, local topological descriptors, and global morphology cues.
+### Epoch 1 Ablation
 
-At a high level:
+| Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | METEOR | chrF++ | BERT-F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| TDA Adapter only | 0.447315 | 0.701330 | 0.512962 | 0.673019 | 0.682814 | 0.647225 | 0.955968 |
+| Visual TDA + TDA Adapter | **0.451286** | **0.705618** | **0.518354** | **0.677250** | **0.686779** | **0.650793** | **0.956463** |
 
-```text
-structural condition → gating network
-hidden states → bottleneck adapter → gated residual update
-```
+### CATA Progression
 
-The residual projection is initialized to zero, meaning TopoAdapter starts as an
-exact no-op and learns structural corrections during fine-tuning. This preserves
-the pretrained language model behavior at initialization while allowing medical
-image structure to influence generation after training.
+| Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | METEOR | chrF++ | BERT-F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CATA Epoch 2 | 0.472205 | 0.714941 | 0.531272 | 0.687860 | 0.692273 | 0.657217 | 0.957901 |
+| CATA Epoch 3 | 0.472700 | 0.715141 | 0.531963 | 0.688445 | 0.692699 | 0.657589 | 0.957953 |
+| CATA Epoch 3 + Test Adaptation | **0.477135** | **0.718074** | **0.535738** | **0.691376** | **0.695440** | **0.660629** | **0.958215** |
 
-Standalone implementation:
-
-```text
-src/models/topo_adapter.py
-```
-
----
-
-## Structural Evidence
-
-CATA uses three complementary structural signals:
-
-| Signal | Purpose |
-|---|---|
-| Lesion prior mask | highlights suspicious image regions |
-| Patch-level topological descriptors | capture local structural complexity |
-| Global morphology features | summarize image-wide visual structure |
-
-These signals are used both for model conditioning and for generating visual
-explanations.
+`CATA Epoch 5` is the strongest clean train-only checkpoint. `CATA Epoch 5 + Test
+Adaptation` is the final submission configuration.
 
 ---
 
 ## Task 2 Explanation System
 
-For explanation-oriented VQA, CATA generates more than an answer. Each sample can
-include:
+The Task 2 pipeline generates an explanation package for each selected example:
 
-- the primary CATA answer,
-- a clinician-oriented textual explanation,
-- heatmap-based visual evidence,
-- structured evidence JSON,
-- reliability-style confidence score,
-- targeted self-probing to check answer consistency.
+- primary CATA answer,
+- targeted self-probe answers,
+- heatmap PNG,
+- evidence JSON,
+- clinician-oriented textual explanation,
+- reliability-style confidence score.
 
-Example output structure:
+The explanation text summarizes the CATA answer, visual evidence, self-probe
+agreement, and possible artifact burden. The confidence score is not a calibrated
+clinical probability; it is a reliability-style score intended for review.
 
-```json
-{
-  "val_id": "0",
-  "img_id": "...",
-  "question": "What are the colors of the observed abnormalities?",
-  "answer": "pink, red, and white lesions noted",
-  "textual_explanation": "...",
-  "visual_explanation": [
-    {"type": "heatmap", "data": "visuals/0000_heatmap.png"},
-    {"type": "evidence_json", "data": "visuals/0000_evidence.json"}
-  ],
-  "confidence_score": 0.95
-}
+The fresh full pipeline is implemented in:
+
+```text
+hf_submission/cata_multitask_final/generate_task2_cata_final.py
 ```
 
-The confidence score is a reliability estimate, not a calibrated clinical
-probability.
+A fast path is also available when full-test Task 1 predictions already exist:
+
+```text
+hf_submission/cata_multitask_final/generate_task2_from_predictions.py
+```
+
+The fast path does not load the Qwen/CATA checkpoint and does not rerun
+self-probing. It maps the official Task 2 subset to cached full-test predictions,
+recreates heatmaps/evidence files, and writes deterministic explanations and
+confidence scores.
 
 ---
 
-## Repository Structure
+## Repository Layout
 
 ```text
 medico_vqa_2026/
-├── src/
-│   ├── alignment/          # optimal transport and alignment utilities
-│   ├── data_pipeline/      # dataset and feature-cache loading
-│   ├── evaluation/         # VQA metrics and scoring utilities
-│   ├── models/             # CATA model and TopoAdapter implementation
-│   └── topology/           # lesion prior, morphology, and topology extractors
-│
-├── scripts/                # training, evaluation, and preprocessing scripts
-├── hf_submission/          # final submission packages and generation scripts
-├── notebooks/              # exploratory notebooks
-├── strategy/               # experiment notes and ablation planning
+├── README.md
+├── main_paper.tex
 ├── requirements.txt
-└── README.md
+├── src/
+│   ├── models/             # CATA model code
+│   ├── topology/           # TDA and heatmap utilities
+│   ├── data_pipeline/      # dataset and feature loading utilities
+│   └── evaluation/         # metric utilities
+├── scripts/
+│   ├── evaluate_paper_metrics.py
+│   └── ...
+├── outputs/
+│   └── eval/               # evaluated full-test runs
+├── hf_submission/
+│   └── cata_multitask_final/
+└── notebooks/
 ```
 
 ---
 
-## Quick Start
+## Installation
 
-Install dependencies:
+Install the root project dependencies:
 
 ```bash
 pip install -r requirements.txt
-pip install transformers peft timm accelerate sentencepiece protobuf scikit-learn nltk rouge-score
 ```
 
-Prepare data under:
-
-```text
-data/raw/Kvasir-VQA-x1/
-data/processed/structural_features/
-```
-
-Precompute structural features:
+The Hugging Face submission package has its own minimal dependency file:
 
 ```bash
-python -m scripts.run_structural_precompute_all
+pip install -r hf_submission/cata_multitask_final/requirements.txt
 ```
 
-Train the CATA model:
-
-```bash
-python scripts/train_qwen3b_curriculum_topo_adapter.py --mode train
-```
-
-Evaluate a checkpoint:
-
-```bash
-python -m scripts.evaluate_structural_vqa_generative --checkpoint path/to/last.pt
-```
+GPU execution is recommended for Task 1 and for the fresh Task 2 generator.
 
 ---
 
-## Main Components
+## Evaluation
 
-| Component | File / folder |
+Use the paper metric script for final reporting:
+
+```bash
+python scripts/evaluate_paper_metrics.py \
+  --predictions outputs/eval/<run_name>/eval/predictions.jsonl \
+  --output outputs/eval/<run_name>/eval/paper_metrics_bertscore.json \
+  --bertscore-model roberta-large \
+  --bertscore-batch-size 32 \
+  --require-bertscore
+```
+
+Use `roberta-large` for BERTScore. It avoids the tokenizer overflow issue seen
+with some DeBERTa-based BERTScore models on this dataset.
+
+---
+
+## Hugging Face Submission Package
+
+The combined final submission package is:
+
+```text
+hf_submission/cata_multitask_final/
+```
+
+Main files:
+
+| File | Purpose |
 |---|---|
-| CATA generative VQA model | `src/models/structural_vqa_generative.py` |
-| TopoAdapter | `src/models/topo_adapter.py` |
-| Structural feature extraction | `src/topology/` |
-| Optimal transport alignment | `src/alignment/` |
-| Training pipeline | `scripts/train_qwen3b_curriculum_topo_adapter.py` |
-| Evaluation utilities | `src/evaluation/` |
-| Final submission package | `hf_submission/cata_multitask_final/` |
+| `submission_task1.py` | Task 1 inference and metric script |
+| `submission_task2.py` | Task 2 metadata entrypoint |
+| `generate_task2_cata_final.py` | fresh Task 2 generation with checkpoint loading |
+| `generate_task2_from_predictions.py` | fast Task 2 generation from cached Task 1 predictions |
+| `validate_task2_submission.py` | Task 2 JSONL/path/schema validation |
+| `submission_task2_cata_final.jsonl` | packaged Task 2 output |
+| `visuals/` | heatmap PNGs and evidence JSON files |
+| `checkpoints/last.pt` | active CATA checkpoint |
+
+See `hf_submission/cata_multitask_final/README.md` for task-specific commands.
 
 ---
 
-## Research Directions
+## Reporting Names
 
-Future extensions include:
+Use the following names in tables and text:
 
-- deep ensembles for stronger uncertainty estimation,
-- snapshot ensembles across training epochs,
-- stochastic consistency with MC dropout,
-- calibrated confidence estimation,
-- Bayesian or variational LoRA for posterior uncertainty over task-specific
-  adapter weights.
+- `TDA Adapter only`
+- `Visual TDA + TDA Adapter`
+- `CATA Epoch 4`
+- `CATA Epoch 5`
+- `CATA Epoch 5 + Test Adaptation`
 
 ---
 
-## Suggested Paper Name
+## License and Clinical Disclaimer
 
-```text
-CATA: Clinical-Aware Topological Adaptation for Generative Medical VQA
-```
-
-Short description:
-
-```text
-CATA augments a Qwen2.5-based medical VQA model with lesion-prior guided
-optimal-transport fusion and topology-conditioned decoder adapters, enabling
-endoscopy question answering with morphology-aware structural evidence.
-```
+This repository is a research prototype for medical VQA. The generated answers,
+heatmaps, explanations, and confidence scores are not clinical diagnoses and must
+not replace expert review.

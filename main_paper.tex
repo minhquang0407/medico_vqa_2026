@@ -1,27 +1,47 @@
-\documentclass{article}
+\documentclass[11pt,a4paper]{article}
 \usepackage[utf8]{inputenc}
+\usepackage{authblk}
 \usepackage[vietnamese]{babel}
 \usepackage{graphicx}
 \usepackage{booktabs}
+\usepackage{multirow}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{hyperref}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
 
-\title{CATA: Thích nghi Topo Nhận thức Lâm sàng cho Hỏi đáp Trực quan Y khoa Sinh văn bản}
-\author{Minh Quang Nguyen \\
-Team Sweet\&Sour \\
-Independent}
-\date{June 2026}
+\makeatletter
+\renewcommand{\@maketitle}{
+  \begin{flushleft}
+    {\LARGE \bfseries \@title \par}
+    \vspace{1.5em}
+    {\large \@author \par}
+    \vspace{1em}
+    {\large \@date \par}
+  \end{flushleft}
+  \vspace{1em}
+}
+\makeatother
+
+\title{CATA: Clinical-Aware Topological Adaptation for Generative Medical VQA}
+
+\author[1,2]{Minh Quang Nguyen\thanks{23110203@student.hcmus.edu.vn.}}
+
+\affil[1]{University of Science, VNU-HCM}
+\affil[2]{Vietnam National University, Ho Chi Minh City, Vietnam}
+
+\date{}
 
 \begin{document}
-
 \maketitle
+\setlength{\parindent}{0pt}
 
 \begin{abstract}
 Bài báo này mô tả hệ thống CATA (Clinical-Aware Topological Adaptation) cho MediaEval Medico VQA 2026. Phiên bản final của CATA là một mô hình hỏi đáp trực quan y khoa dạng sinh văn bản cho ảnh nội soi tiêu hóa, kết hợp bộ mã hóa ảnh ViT/timm pretrained được đóng băng, Qwen2.5-3B-Instruct được tinh chỉnh bằng QLoRA, Visual TDA fusion ở nhánh ảnh và gated TDA Adapter trong các tầng decoder cuối của LLM. Hệ thống final tập trung vào descriptor TDA theo patch, dùng để điều kiện hóa visual fusion và adapter trong LLM. Trên tập full-test 15,955 mẫu, CATA Epoch 5 đạt BLEU 0.4727, ROUGE-L 0.6884, METEOR 0.6927 và BERTScore-F1 0.9580; phiên bản test-adapt đạt BLEU 0.4771, ROUGE-L 0.6914, METEOR 0.6954 và BERTScore-F1 0.9582. Với Task 2, hệ thống tạo câu trả lời, targeted self-probes, heatmap, evidence JSON, textual explanation và reliability-style confidence phục vụ rà soát lâm sàng.
 \end{abstract}
 
-\section{Giới thiệu}
+\section{Introduction and Related Work}
 
 Medical Visual Question Answering (Medical VQA) yêu cầu mô hình trả lời câu hỏi bằng ngôn ngữ tự nhiên dựa trên ảnh y khoa. Trong ngữ cảnh nội soi tiêu hóa, bài toán này đặc biệt khó vì bằng chứng thị giác thường nhỏ, mờ, chịu ảnh hưởng của ánh sáng phản chiếu, biến dạng hình học và các cấu trúc niêm mạc phức tạp. Các mô hình vision-language hiện đại có thể tận dụng Vision Transformer (ViT) và Large Language Model (LLM), nhưng embedding ảnh thuần túy không phải lúc nào cũng nhấn mạnh đủ các vùng có hình thái bất thường.
 
@@ -156,6 +176,6 @@ Với Task 2, explanation package không được xem là bằng chứng chẩn 
 
 \section{Kết luận}
 
-Bài báo trình bày CATA, một hệ thống generative medical VQA cho ảnh nội soi tiêu hóa. Phiên bản final kết hợp ViT/timm pretrained, Qwen2.5-3B-Instruct, QLoRA, Visual TDA fusion và gated TDA Adapter. Việc loại bỏ các cơ chế phức tạp hơn và tập trung vào TDA theo patch giúp mô hình đạt kết quả mạnh trên full-test, đồng thời tạo được explanation package cho Task 2 gồm textual explanation, targeted self-probes, heatmap, evidence JSON và reliability-style confidence. Kết quả ablation xác nhận Visual TDA + TDA Adapter là cấu hình được chọn cho CATA-Final.
+Bài báo trình bày CATA, một hệ thống generative medical VQA cho ảnh nội soi tiêu hóa. Phiên bản final kết hợp ViT/timm pretrained, Qwen2.5-3B-Instruct, QLoRA, Visual TDA fusion và gated TDA Adapter. CATA tập trung vào TDA theo patch để bổ sung tín hiệu topo cục bộ cho quá trình mã hóa ảnh và sinh câu trả lời, đạt kết quả mạnh trên full-test, đồng thời tạo được explanation package cho Task 2 gồm textual explanation, targeted self-probes, heatmap, evidence JSON và reliability-style confidence. Kết quả ablation xác nhận Visual TDA + TDA Adapter là cấu hình được chọn cho CATA-Final.
 
 \end{document}
