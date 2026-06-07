@@ -584,7 +584,7 @@ def main():
             "pass outputs/<run>/checkpoints/last.pt explicitly."
         ),
     )
-    parser.add_argument("--output-jsonl", default="submission_task2.jsonl")
+    parser.add_argument("--output-jsonl", default="submission_task2_cata_final.jsonl")
     parser.add_argument("--visual-dir", default="visuals")
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--max-new-tokens", type=int, default=48)

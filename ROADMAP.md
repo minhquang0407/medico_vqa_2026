@@ -7,6 +7,64 @@ and code direction.
 
 ---
 
+## Strategic Update: "Tứ bộ khúc CATA" / Four-Paper Research Arc
+
+The long-term publication strategy is now organized as a four-paper arc. The
+core principle is **decomposition before unification**: isolate the empirical
+system, the decoder-side mathematical reasoning, and the vision-side geometric
+encoder before combining them into a unified journal framework.
+
+> Important boundary: the current MediaEval system remains **Visual TDA Fusion +
+> Gated TDA Adapter only**. OT, GraphOT, Dual-End Fusion, and Grand Unified CATA
+> are roadmap targets, not current-system claims.
+
+| Paper | Role | Target | Main focus | Relation to current code |
+|---|---|---|---|---|
+| Paper 1: MediaEval Working Notes | Timestamp / empirical proof-of-concept | MediaEval 2026 | Show CATA runs end-to-end on noisy Kvasir-VQA with Qwen-3B-scale compute | Current implementation |
+| Paper 2: TDA + LLM Reasoning Core | NLP / mathematical reasoning core | ICLR / NeurIPS / strong NLP-AI venue | Study how Betti-style topological summaries and dynamic gates improve count/structure-sensitive decoding | Extends the current Gated TDA Adapter, but should be tested model-agnostically |
+| Paper 3: Dual-End Fusion ViT | CV / geometric perception core | CVPR / ICCV / MICCAI | Analyze ViT patchification and preserve geometric continuity through structural fusion at both input and output sides | Extends current Visual TDA Fusion; LLM should be removed from the core experiments |
+| Paper 4: Grand Unified CATA | Unified neuro-symbolic framework | IEEE TPAMI / TMI / MedIA | Combine Paper 2 and Paper 3 into a differentiable framework from pixels to text | Future CATA-v2/v3 journal system |
+
+### Paper 1 Immediate Role
+
+The MediaEval paper is the urgent timestamp paper. It should establish priority
+for the CATA idea and report the submitted system transparently. If using the
+provided strategic summary, the report may mention the Qwen-3B-scale hardware
+profile and the relevant METEOR score, but the final number must match the
+compiled result table before submission.
+
+### Paper 2 First-Principles Hypothesis
+
+The second paper should ask whether topological quantities such as Betti-style
+features can condition LLM decoding in a way that improves count-sensitive and
+structure-sensitive reasoning. The strongest version should remove ViT from the
+core experiment and evaluate multiple LLM backbones to show that the mechanism is
+model-agnostic.
+
+Safe paper wording: topology-conditioned gates **encourage** or **bias** the LLM
+toward count-consistent decoding. Avoid claiming that the gate "forces" symbolic
+logic unless it is formally proven and experimentally validated.
+
+### Paper 3 First-Principles Hypothesis
+
+The third paper should isolate the vision encoder. Its central hypothesis is
+that ViT patchification can weaken spatial continuity for biological structures,
+and that a **Dual-End Geometry Preservation Loop** can preserve structural
+information by injecting topology/morphology cues both before and after visual
+encoding. This paper should not depend on the LLM as the main contribution.
+
+### Paper 4 First-Principles Hypothesis
+
+The fourth paper should be the long journal version: a Grand Unified CATA
+framework showing how the vision-side geometry-preserving encoder and the
+language-side topology-conditioned adapter interact. A possible formal direction
+is to analyze differentiable gradient flow from a Sinkhorn/OT-style structural
+loss through the decoder gate and back into the geometry-preserving ViT branch.
+This is a future theory target and should not be claimed in the current system
+paper.
+
+---
+
 ## 0. Current Paper: MediaEval System Paper
 
 ### Role
@@ -19,12 +77,30 @@ This paper should describe the submitted CATA system honestly and concisely:
 
 - Qwen2.5-3B-Instruct + LoRA generative VQA backbone.
 - Frozen pretrained ViT/timm vision encoder.
-- Lesion-prior guided structural fusion.
-- Patch-level topology and morphology features.
-- Prior-guided Sinkhorn/OT alignment.
+- Residual Visual TDA fusion with patch-level topology/morphology features.
 - TopoAdapter inserted into the final decoder layers.
 - Task 2 explanation generation with heatmaps, evidence JSON, self-probing, and
   reliability-style confidence.
+
+Current architecture boundary: **Visual TDA Fusion + TDA Adapter only**. Do not
+present OT, GraphOT, lesion-prior routing, token-wise gated visual fusion,
+Dual-End Fusion, or Grand Unified CATA as components of the submitted system;
+keep them as future ROADMAP experiments.
+
+### Strategic Role in the Four-Paper Arc
+
+This is **Paper 1: the empirical timestamp paper**. Its goal is not to solve the
+whole theory of CATA, but to establish that the idea is real, runnable, and
+useful under the MediaEval benchmark constraints. The paper should emphasize:
+
+- end-to-end feasibility on Kvasir-VQA-x1,
+- Qwen-3B-scale compute efficiency,
+- practical gains from Visual TDA Fusion and the Gated TDA Adapter,
+- Task 2 explanation packaging as a review-support pipeline,
+- careful separation between implemented modules and future extensions.
+
+Deadline pressure: this is the highest-priority manuscript before the 10/06
+submission window.
 
 ### Important Writing Rule
 
@@ -51,7 +127,7 @@ Avoid hard claims:
 - [ ] Add Task 1 results table.
 - [ ] Add Task 2 qualitative examples.
 - [ ] Add at least Group A baseline if time permits.
-- [ ] Correct the TopoAdapter, OT, and loss formulas to match implementation.
+- [ ] Correct the Visual TDA, TopoAdapter, and loss formulas to match implementation.
 
 ---
 
@@ -71,12 +147,30 @@ Conference paper, aiming for A/A* or strong medical-imaging venue.
 
 Possible venues:
 
+- CVPR
+- ICCV
 - MICCAI
 - MIDL
 - ISBI
 - WACV
 - BMVC
 - ACM Multimedia workshop/main track if multimodal angle is strong
+
+### Four-Paper Arc Mapping
+
+In the updated "Tứ bộ khúc CATA" strategy, this section corresponds to
+**Paper 3: Dual-End Fusion ViT**, the CV/geometric perception core. It should
+remove the LLM from the main contribution and focus on the vision encoder.
+
+First-principles framing:
+
+> ViT patchification can fragment continuous biological structures into discrete
+> tokens. A geometry-preservation loop can inject topology/morphology cues at
+> both the input side and the output side of the encoder to preserve entity
+> continuity.
+
+This is a future research hypothesis. The current MediaEval paper should only
+claim the implemented scalar-residual Visual TDA Fusion.
 
 ### Main Research Question
 
@@ -102,8 +196,101 @@ Relevant code areas:
 - `src/topology/tda_extractor.py`
 - `src/models/vision_encoder.py`
 - `src/models/fusion.py`
+- `src/alignment/graph_ot.py` **(new — GraphOT)**
+- `src/topology/patch_graph.py` **(new — patch graph construction)**
 - `scripts/precompute_structural_features.py`
 - `scripts/run_pretrained_vision_ablation.py`
+- `scripts/run_graph_ot_ablation.py` **(new)**
+
+### Key New Idea A: Token-wise Gated Visual TDA Fusion
+
+The current implementation in `src/models/fusion.py` is deliberately stable and
+uses a learnable scalar residual coefficient shared across all patches:
+
+```
+\bar{v}_i = LN_v(v_i)
+\tilde{t}_i = MLP_t(LN_t(t_i))
+\hat{v}_i = LN_out(\bar{v}_i + beta · \tilde{t}_i)
+```
+
+This keeps the pretrained ViT embedding as the main information source, but the
+same global `beta` is applied to every patch. A stronger experimental variant is
+**Token-wise Gated TDA Fusion**:
+
+```
+alpha_i = sigmoid(MLP_g([\bar{v}_i ; \tilde{t}_i]))
+\hat{v}_i = LN_out(\bar{v}_i + alpha_i · \tilde{t}_i)
+```
+
+Recommended first version:
+
+- `alpha_i ∈ [0, 1]` is a **scalar gate per patch**.
+- Keep `\tilde{t}_i` at the ViT hidden dimension.
+- Log `gate_mean`, `gate_std`, and a 14×14 gate heatmap for interpretation.
+- Keep the current scalar-`beta` fusion as the baseline.
+
+Later version:
+
+- `alpha_i ∈ [0, 1]^D` channel-wise gate for higher capacity.
+- Add mild gate regularization only if the gate collapses to all-zero or all-one.
+
+#### Why this is worth testing
+
+- It lets topology-rich lesion patches receive stronger TDA corrections.
+- It lets background/noisy patches suppress unreliable TDA descriptors.
+- It is still lightweight and easier to train than GraphOT.
+- It produces interpretable token-level gate maps that can be compared with
+  lesion priors and TDA saliency maps.
+
+### Key New Idea B: GraphOT Visual TDA Fusion
+
+After establishing the token-wise gated baseline, **GraphOT** can be tested as a
+more structural variant. Instead of letting each patch decide independently,
+GraphOT regularizes the visual--TDA interaction over a patch graph:
+
+```
+min_P  <P, C>  +  ε · H(P)  +  λ · tr(P^T L P)
+```
+
+Where `L` is the graph Laplacian over visual patches. This enforces:
+
+- **Spatial smoothness**: neighboring patches receive similar transport.
+- **Cross-patch borrowing**: a weak-TDA patch can borrow signal from a
+  strong-TDA neighbor.
+- **TDA-informed graph**: the adjacency can be built from TDA feature
+  similarity (kNN on persistence descriptors), not just grid position.
+
+#### Graph construction options
+
+| Graph type | Adjacency rule |
+|---|---|
+| Grid-4 | 4-connected neighbors on 14×14 patch grid |
+| Grid-8 | 8-connected neighbors |
+| TDA-kNN | k nearest neighbors in TDA feature space |
+| Hybrid | Grid-8 ∪ TDA-kNN |
+
+#### Why these are good contributions for Paper 1
+
+- Paper 1 focuses on the **vision side** only.
+- Token-wise gated fusion is a clean upgrade over the current scalar residual
+  fusion while staying easy to ablate.
+- GraphOT is a structural fusion method that operates entirely within the
+  visual branch, before any LLM interaction.
+- Graph construction naturally connects to TDA: the graph can be built from
+  persistence features, making it genuinely topology-aware.
+- Endoscopy images have spatially continuous lesions → graph smoothness is a
+  strong and well-motivated inductive bias.
+
+#### Files to create / modify
+
+| File | Action | Description |
+|---|---|---|
+| `src/models/fusion.py` | **MODIFY** | Add `fusion_mode={scalar,token_gate,channel_gate}` and token-wise gate diagnostics |
+| `src/models/vision_encoder.py` | **MODIFY** | Wire visual fusion mode into the encoder config |
+| `src/alignment/graph_ot.py` | **NEW** | `GraphSinkhornOT`: extend Sinkhorn with Laplacian penalty |
+| `src/topology/patch_graph.py` | **NEW** | `build_patch_graph()`: grid / TDA-kNN / hybrid adjacency + Laplacian |
+| `scripts/run_visual_tda_gate_ablation.py` | **NEW** | Ablation script for scalar vs token-wise vs channel-wise gates |
+| `scripts/run_graph_ot_ablation.py` | **NEW** | Ablation script for GraphOT variants |
 
 ### Possible Model Variants
 
@@ -112,7 +299,12 @@ Relevant code areas:
 | ViT only | pretrained ViT/timm features only |
 | ViT + lesion prior | spatial prior used as additional visual cue |
 | ViT + global morphology | image-level morphology output fusion |
-| ViT + patch TDA | local topological feature fusion |
+| ViT + patch TDA (scalar residual) | current implementation with learnable global `beta` |
+| ViT + patch TDA (token-wise scalar gate) | proposed per-patch `alpha_i` gate |
+| ViT + patch TDA (channel-wise gate) | proposed per-patch, per-channel gate |
+| ViT + patch TDA (GraphOT grid) | GraphOT with grid-8 adjacency |
+| ViT + patch TDA (GraphOT TDA-kNN) | GraphOT with TDA feature kNN graph |
+| ViT + patch TDA (GraphOT hybrid) | GraphOT with grid-8 ∪ TDA-kNN |
 | ViT + all structural features | full structural visual representation |
 
 ### Experiments Needed
@@ -120,10 +312,18 @@ Relevant code areas:
 - [ ] ViT-only baseline.
 - [ ] ViT + lesion prior.
 - [ ] ViT + morphology.
-- [ ] ViT + patch TDA.
+- [ ] ViT + patch TDA (scalar residual, current).
+- [ ] ViT + patch TDA (token-wise scalar gate).
+- [ ] ViT + patch TDA (channel-wise gate, optional if scalar gate works).
+- [ ] ViT + patch TDA (GraphOT grid-8).
+- [ ] ViT + patch TDA (GraphOT TDA-kNN).
+- [ ] ViT + patch TDA (GraphOT hybrid).
 - [ ] ViT + all structural signals.
-- [ ] Visualization of lesion priors and structural feature maps.
+- [ ] Visualization of lesion priors, TDA saliency, and token-wise gate maps.
+- [ ] GraphOT transport plan visualization (spatial smoothness).
 - [ ] Question-type analysis, especially lesion/count/location questions.
+- [ ] Ablation on gate type, gate regularization, λ (Laplacian weight), and k
+  (kNN neighbors).
 
 ### Metrics
 
@@ -133,7 +333,8 @@ Possible metrics:
 - token F1,
 - count-question accuracy,
 - localization agreement if masks/proxies exist,
-- retrieval/classification proxy metrics if additional labels are available.
+- retrieval/classification proxy metrics if additional labels are available,
+- transport plan smoothness (entropy, Laplacian energy).
 
 ### What Not to Emphasize
 
@@ -174,11 +375,37 @@ generative medical VQA?
 
 This paper focuses on the **LLM decoder side**:
 
-- TopoAdapter.
+- TopoAdapter / Gated TDA Adapter.
 - Topology-conditioned hidden-state modulation.
-- Prior-guided OT alignment.
+- Dynamic gates controlled by Betti-style/TDA statistics.
+- Model-agnostic evaluation across multiple LLM backbones.
+- Count-sensitive and structure-sensitive decoding.
 - Gate regularization.
 - Curriculum training.
+
+In the four-paper arc, this is **Paper 2: the TDA + LLM reasoning core**. The
+strongest version should temporarily remove ViT from the central experiment and
+use precomputed topology/structure conditions, so that the contribution is not
+confounded with the visual encoder.
+
+Possible model-agnostic setup:
+
+| Backbone | Purpose |
+|---|---|
+| Qwen2.5-3B | current efficient CATA backbone |
+| Llama-family small model | cross-family generalization |
+| Phi/Gemma-family small model | additional decoder architecture check |
+| text-only synthetic counting task | isolates topology-conditioned decoding |
+| medical VQA with frozen visual features | tests transfer back to the benchmark |
+
+Research hypothesis:
+
+> Betti-style topological summaries, especially connected-component and loop-like
+> cues, can condition dynamic gates that bias the decoder toward more stable
+> count and morphology-sensitive answers.
+
+Use safe wording (`biases`, `encourages`, `regularizes`) until a formal proof or
+controlled synthetic benchmark supports stronger claims.
 
 ### Core Claim
 
@@ -232,7 +459,18 @@ g_i(1-g_i).
 
 ### Correct Total Loss
 
-A safe paper formula:
+For the **current MediaEval paper**, use only the implemented loss:
+
+```latex
+\mathcal{L}_{total}
+=
+\mathcal{L}_{CE}
++
+\lambda_{gate}\mathcal{L}_{gate}.
+```
+
+For a **future Paper 2 / Paper 4** version that actually implements OT or
+structural losses, a safe extended formula is:
 
 ```latex
 \mathcal{L}_{total}
@@ -245,6 +483,9 @@ A safe paper formula:
 +
 \lambda_{gate}\mathcal{L}_{gate}.
 ```
+
+Do not include $\mathcal{L}_{OT}$ in the MediaEval system paper unless it is
+re-enabled in the submitted code and ablated.
 
 ### Experiments Needed
 
@@ -310,8 +551,52 @@ Possible journals:
 
 ### Role
 
-This paper unifies Paper 1 and Paper 2, but must add genuinely new contributions.
+This paper unifies Paper 2 and Paper 3, but must add genuinely new contributions.
 It should not be only a combination of previous papers.
+
+### Four-Paper Arc Mapping
+
+In the updated strategy, this is **Paper 4: Grand Unified CATA**. The goal is a
+long Q1 journal paper that connects the decoder-side TDA reasoning core and the
+vision-side geometry preservation core into a single differentiable framework.
+
+Target venues:
+
+- IEEE TPAMI,
+- IEEE Transactions on Medical Imaging,
+- Medical Image Analysis,
+- Information Fusion.
+
+First-principles target:
+
+```latex
+\mathcal{L}_{unified}
+=
+\mathcal{L}_{CE}
++
+\lambda_{OT}\mathcal{L}_{OT}
++
+\lambda_{geo}\mathcal{L}_{geo}
++
+\lambda_{gate}\mathcal{L}_{gate}.
+```
+
+A possible theory direction is to analyze a chain-rule path such as:
+
+```latex
+\frac{\partial \mathcal{L}_{unified}}{\partial \theta_{ViT}}
+=
+\frac{\partial \mathcal{L}_{unified}}{\partial \mathbf{h}'_l}
+\frac{\partial \mathbf{h}'_l}{\partial \mathbf{g}}
+\frac{\partial \mathbf{g}}{\partial \mathbf{z}}
+\frac{\partial \mathbf{z}}{\partial T}
+\frac{\partial T}{\partial \theta_{ViT}}.
+```
+
+This should be treated as a future mathematical program: demonstrate smooth
+backpropagation from Sinkhorn/OT-style structural objectives through the decoder
+gate and into the vision-side geometry-preserving loop. Only claim it after the
+implementation and ablations exist.
 
 ### Required New Contributions
 
@@ -324,6 +609,7 @@ CATA-v2 should add at least two of the following:
 5. **Calibrated Confidence Estimation**
 6. **Faithfulness Evaluation for Explanations**
 7. **Multi-dataset Validation**
+8. **GraphOT Visual TDA Fusion** (from Paper 1, integrated into full system)
 
 ### 3.1 Supervised Gate Alignment
 
@@ -448,74 +734,91 @@ Candidate datasets:
 
 ### CATA-v2 Ablation Table
 
-| Model | Structural ViT | OT | TopoAdapter | Gate Supervision | Q-aware Loss | Uncertainty | Score |
-|---|---|---|---|---|---|---|---:|
-| Baseline | no | no | no | no | no | no | TBD |
-| Paper 1 model | yes | no | no | no | no | no | TBD |
-| Paper 2 model | partial | yes | yes | no | no | no | TBD |
-| CATA-v2 minus gate-align | yes | yes | yes | no | yes | yes | TBD |
-| CATA-v2 minus q-aware | yes | yes | yes | yes | no | yes | TBD |
-| CATA-v2 full | yes | yes | yes | yes | yes | yes | TBD |
+| Model | Structural ViT | GraphOT Fusion | OT | TopoAdapter | Gate Supervision | Q-aware Loss | Uncertainty | Score |
+|---|---|---|---|---|---|---|---|---:|
+| Baseline | no | no | no | no | no | no | no | TBD |
+| Paper 1 model (gated) | yes | no | no | no | no | no | no | TBD |
+| Paper 1 model (GraphOT) | yes | yes | no | no | no | no | no | TBD |
+| Paper 2 model | partial | no | yes | yes | no | no | no | TBD |
+| CATA-v2 minus GraphOT | yes | no | yes | yes | yes | yes | yes | TBD |
+| CATA-v2 minus gate-align | yes | yes | yes | yes | no | yes | yes | TBD |
+| CATA-v2 minus q-aware | yes | yes | yes | yes | yes | no | yes | TBD |
+| CATA-v2 full | yes | yes | yes | yes | yes | yes | yes | TBD |
 
 ---
 
 ## Publication Separation Strategy
 
-There will be four outputs:
+There will be four papers in the **Tứ bộ khúc CATA** arc:
 
-| Output | Type | Main Role | Main Novelty |
-|---|---|---|---|
-| MediaEval paper | workshop/system | benchmark submission report | submitted CATA system |
-| Paper 1 | A/A* conference | vision-side method | structural features for ViT |
-| Paper 2 | A/A* conference | decoder-side method | TDA Adapter + OT for LLM |
-| Paper 3 | Q1 journal | unified framework | CATA-v2 with new structural control and validation |
+| Paper | Type | Main Role | Main Novelty | What to exclude |
+|---|---|---|---|---|
+| Paper 1: MediaEval Working Notes | workshop/system | benchmark submission report and timestamp | submitted CATA system: Visual TDA + Gated TDA Adapter | do not claim OT, GraphOT, Dual-End Fusion, or unified theory |
+| Paper 2: TDA + LLM | A/A* conference | NLP/math reasoning core | Betti/TDA-conditioned dynamic gates for count/structure-sensitive decoding | do not make ViT fusion the main novelty |
+| Paper 3: Dual-End Fusion ViT | A/A* CV conference | vision-side geometric core | geometry-preserving ViT with structural injection at input and output | do not focus on LLM decoding |
+| Paper 4: Grand Unified CATA | Q1 journal | unified neuro-symbolic framework | differentiable pixel-to-text topology-aware adaptation | do not submit as a simple combination without new theory/experiments |
 
 ### Avoiding Overlap
 
 - MediaEval paper: concise system report, no overly broad theory.
-- Paper 1: do not focus on TopoAdapter.
-- Paper 2: do not make structural ViT fusion the main novelty.
-- Paper 3: must add new contributions beyond simply combining Paper 1 and Paper 2.
+- Paper 2: isolate the decoder-side TDA gate; test model-agnostic behavior.
+- Paper 3: isolate the vision encoder; no LLM as the main contribution.
+- Paper 4: must add new contributions beyond simply combining Paper 2 and Paper 3.
+- All papers must preserve claim discipline and clearly separate implemented
+  modules from future hypotheses.
 
 ---
 
 ## Recommended Timeline
 
-### Phase 0 — Finish MediaEval Paper
+### Phase 0 — Finish Paper 1: MediaEval Working Notes
 
 - [ ] Convert paper to English.
 - [ ] Correct implementation-faithful formulas.
 - [ ] Add results and qualitative examples.
 - [ ] Keep claims modest.
+- [ ] Verify final official numbers before quoting METEOR/BLEU in the text.
+- [ ] Submit before the 10/06 deadline window.
 
-### Phase 1 — Paper 2 First
+### Phase 1 — Paper 2: TDA + LLM Reasoning Core
 
-Reason: closest to current CATA code.
+Reason: closest to the current Gated TDA Adapter code.
 
+- [ ] Define Betti/TDA condition vector variants: $\beta_0$, $\beta_1$, persistence summaries, and current 36-D patch statistics.
+- [ ] Build model-agnostic decoder experiments across at least two LLM families.
 - [ ] Run Group A baseline.
-- [ ] Run OT-only ablation.
-- [ ] Run TopoAdapter-only ablation.
-- [ ] Run patch-only vs all topology ablation.
+- [ ] Run TopoAdapter-only / Gated TDA Adapter ablation.
+- [ ] Run patch-only vs all-topology condition ablation.
 - [ ] Run no-gate-loss ablation.
-- [ ] Collect gate diagnostics.
-- [ ] Write formal TopoAdapter + OT method.
+- [ ] Add synthetic or controlled count-reasoning tests if possible.
+- [ ] Collect gate diagnostics and count/location subset results.
+- [ ] Write formal TDA-conditioned decoder method.
 
-### Phase 2 — Paper 1
+### Phase 2 — Paper 3: Dual-End Fusion ViT
 
-- [ ] Build clean structural ViT fusion experiments.
-- [ ] Compare ViT-only vs structural features.
-- [ ] Visualize structural features.
+- [ ] Build clean structural ViT fusion experiments without relying on LLM novelty.
+- [ ] Compare ViT-only vs scalar Visual TDA Fusion.
+- [ ] Implement token-wise gated Visual TDA Fusion.
+- [ ] Design Dual-End Geometry Preservation Loop: structural injection before and after visual encoding.
+- [ ] Implement `src/alignment/graph_ot.py` (GraphSinkhornOT with Laplacian).
+- [ ] Implement `src/topology/patch_graph.py` (grid / TDA-kNN graph builder).
+- [ ] Implement `GraphOTVisualTDAFusion` in `src/models/fusion.py`.
+- [ ] Run GraphOT ablation: grid-8 vs TDA-kNN vs hybrid.
+- [ ] Ablation on λ (Laplacian weight) and k (kNN neighbors).
+- [ ] Visualize structural features, gate maps, and GraphOT transport plans.
 - [ ] Evaluate downstream VQA and structural/localization proxy tasks.
 
-### Phase 3 — Implement CATA-v2
+### Phase 3 — Paper 4: Grand Unified CATA
 
 - [ ] Create `src/models/topo_adapter_v2.py`.
 - [ ] Add supervised gate alignment.
 - [ ] Add question-aware structural weighting.
 - [ ] Add direct attention-prior alignment if feasible.
-- [ ] Add uncertainty/cali­bration pipeline.
+- [ ] Add uncertainty/calibration pipeline.
+- [ ] Integrate Dual-End Fusion ViT with the decoder-side TDA gate.
+- [ ] Define the unified differentiable objective and chain-rule analysis.
 
-### Phase 4 — Q1 Journal
+### Phase 4 — Q1 Journal Validation
 
 - [ ] Multi-dataset validation.
 - [ ] Full ablation suite.
@@ -558,12 +861,14 @@ Avoid unless proven:
 
 ## Current Priority
 
-The immediate priority is **not** CATA-v2.
+The immediate priority is **not** Grand Unified CATA.
 
 Current order:
 
-1. Finish MediaEval paper.
-2. Run ablations for Paper 2.
-3. Prepare Paper 2 as the first serious conference submission.
-4. Then build Paper 1.
-5. Finally implement and evaluate CATA-v2 for Q1 journal submission.
+1. Finish Paper 1 / MediaEval Working Notes.
+2. Build Paper 2 around the decoder-side TDA gate and model-agnostic LLM tests.
+3. Build Paper 3 around Dual-End Fusion ViT and geometry preservation.
+4. Finally implement Paper 4 / Grand Unified CATA for Q1 journal submission.
+
+Strategic rule: do not mix the four papers too early. Each paper must have a
+single clean mathematical message before the unified framework is attempted.

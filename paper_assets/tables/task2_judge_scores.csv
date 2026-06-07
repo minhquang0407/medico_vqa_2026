@@ -1,0 +1,6 @@
+model,judge,criterion,mean,std,min,max,n
+CATA-Final,Qwen2.5-72B-4bit,Correctness,3.66,0.5577,2.0,4.0,300
+CATA-Final,Qwen2.5-72B-4bit,Faithfulness,3.44,0.5352,2.0,4.0,300
+CATA-Final,Qwen2.5-72B-4bit,Relevance,3.7033,0.4782,2.0,4.0,300
+CATA-Final,Qwen2.5-72B-4bit,Clarity,2.99,0.0995,2.0,3.0,300
+CATA-Final,Qwen2.5-72B-4bit,Completeness,3.4267,0.5927,2.0,4.0,300

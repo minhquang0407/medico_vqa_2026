@@ -1,0 +1,7 @@
+name,aligned,level1_n,level1_bleu,level1_meteor,level1_rougeL,level2_n,level2_bleu,level2_meteor,level2_rougeL,level3_n,level3_bleu,level3_meteor,level3_rougeL,predictions
+Baseline,15955,5496,0.31379,0.573377,0.58352,5251,0.297139,0.559433,0.548706,5208,0.384093,0.625298,0.577214,C:\Users\nguye\Project\medico_vqa_2026\outputs\eval\a0_clean_image_only_30k_e2_fulltest\predictions.jsonl
+Visual TDA,15955,5496,0.352108,0.632093,0.638241,5251,0.312202,0.580144,0.574124,5208,0.404771,0.648,0.596493,C:\Users\nguye\Project\medico_vqa_2026\outputs\eval\b3_tda_visual_only_30k_e2_fulltest\predictions.jsonl
+TDA Adapter only,15955,5496,0.442978,0.682265,0.69955,5251,0.390626,0.648984,0.643863,5208,0.48161,0.717231,0.674029,C:\Users\nguye\Project\medico_vqa_2026\outputs\eval\c1_tda_llm_adapter_only_gate_full_epoch3_fulltest\predictions.jsonl
+Visual TDA + TDA Adapter,15955,5496,0.459595,0.684252,0.705289,5251,0.395058,0.654763,0.64847,5208,0.482865,0.721452,0.677068,C:\Users\nguye\Project\medico_vqa_2026\outputs\eval\d1_tda_visual_plus_llm_adapter_gate_full_epoch3_fulltest\predictions.jsonl
+CATA Epoch 5,15955,5496,0.470356,0.68559,0.710964,5251,0.413648,0.662625,0.661651,5208,0.50772,0.730188,0.691651,C:\Users\nguye\Project\medico_vqa_2026\outputs\eval\cata_d1_full_epoch5_modelonly_train_fulltest\predictions.jsonl
+CATA Epoch 5 + Test Adaptation,15955,5496,0.46814,0.68534,0.711067,5251,0.419579,0.667287,0.665878,5208,0.512606,0.734149,0.696235,C:\Users\nguye\Project\medico_vqa_2026\outputs\eval\cata_d1_full_epoch5_modelonly_train_testadapt1_fulltest\predictions.jsonl

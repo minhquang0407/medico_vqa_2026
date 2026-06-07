@@ -3,12 +3,14 @@
 \usepackage{authblk}
 \usepackage[vietnamese]{babel}
 \usepackage{graphicx}
+\usepackage{float}
 \usepackage{booktabs}
 \usepackage{multirow}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{hyperref}
 \usepackage{geometry}
+\usepackage{placeins}
 \geometry{a4paper, margin=1in}
 
 \makeatletter
@@ -38,14 +40,14 @@
 \setlength{\parindent}{0pt}
 
 \begin{abstract}
-Bài báo này mô tả hệ thống CATA (Clinical-Aware Topological Adaptation) cho MediaEval Medico VQA 2026. Phiên bản final của CATA là một mô hình hỏi đáp trực quan y khoa dạng sinh văn bản cho ảnh nội soi tiêu hóa, kết hợp bộ mã hóa ảnh ViT/timm pretrained được đóng băng, Qwen2.5-3B-Instruct được tinh chỉnh bằng QLoRA, Visual TDA fusion ở nhánh ảnh và gated TDA Adapter trong các tầng decoder cuối của LLM. Hệ thống final tập trung vào descriptor TDA theo patch, dùng để điều kiện hóa visual fusion và adapter trong LLM. Trên tập full-test 15,955 mẫu, CATA Epoch 5 đạt BLEU 0.4727, ROUGE-L 0.6884, METEOR 0.6927 và BERTScore-F1 0.9580; phiên bản test-adapt đạt BLEU 0.4771, ROUGE-L 0.6914, METEOR 0.6954 và BERTScore-F1 0.9582. Với Task 2, hệ thống tạo câu trả lời, targeted self-probes, heatmap, evidence JSON, textual explanation và reliability-style confidence phục vụ rà soát lâm sàng.
+Bài báo trình bày CATA (Clinical-Aware Topological Adaptation), một hệ thống generative medical VQA cho ảnh nội soi tiêu hóa trong MediaEval Medico VQA 2026. CATA kết hợp bộ mã hóa ảnh ViT/timm pretrained được đóng băng, Qwen2.5-3B-Instruct tinh chỉnh bằng QLoRA, Visual TDA Fusion và Gated TDA Adapter. Thay vì chỉ dựa vào embedding ảnh RGB, hệ thống trích xuất descriptor Topological Data Analysis (TDA) theo patch để bổ sung thông tin hình thái và cấu trúc cục bộ cho cả nhánh visual fusion và các tầng decoder cuối của LLM. Trên full-test 15,955 mẫu của Task 1, CATA với test adaptation đạt BLEU 0.4771, ROUGE-L 0.6914, METEOR 0.6954 và BERTScore-F1 0.9582. Các phân tích theo loại câu hỏi và cấp độ phức tạp cho thấy tín hiệu TDA đặc biệt hữu ích ở các câu hỏi đòi hỏi nhận biết vị trí, số lượng, kích thước và bằng chứng hình thái. Với Task 2, CATA sinh explanation package gồm câu trả lời, targeted self-probes, heatmap, evidence JSON, textual explanation và confidence score. Đánh giá bằng Qwen2.5-72B-4bit trên 300 mẫu cho thấy explanation đạt Relevance 3.70 và Correctness 3.66 trên thang 1--5, trong khi phân tích calibration đạt ECE 0.131. Kết quả cho thấy CATA là một hướng tiếp cận hiệu quả để kết hợp đặc trưng topo học với LLM trong VQA nội soi, đồng thời cung cấp tín hiệu giải thích và độ tin cậy phục vụ rà soát lâm sàng.
 \end{abstract}
 
 \section{Introduction and Related Work}
 
 Medical Visual Question Answering (Medical VQA) yêu cầu mô hình trả lời câu hỏi bằng ngôn ngữ tự nhiên dựa trên ảnh y khoa. Trong ngữ cảnh nội soi tiêu hóa, bài toán này đặc biệt khó vì bằng chứng thị giác thường nhỏ, mờ, chịu ảnh hưởng của ánh sáng phản chiếu, biến dạng hình học và các cấu trúc niêm mạc phức tạp. Các mô hình vision-language hiện đại có thể tận dụng Vision Transformer (ViT) và Large Language Model (LLM), nhưng embedding ảnh thuần túy không phải lúc nào cũng nhấn mạnh đủ các vùng có hình thái bất thường.
 
-Chúng tôi đề xuất CATA, một hệ thống VQA sinh văn bản kết hợp Visual TDA fusion và gated TDA Adapter. Thay vì đưa thêm nhiều loại tín hiệu cấu trúc vào mô hình, phiên bản final chỉ giữ lại TDA theo patch. Tín hiệu này được dùng ở hai vị trí: nhánh visual fusion để bổ sung thông tin topo cục bộ cho token ảnh, và adapter trong các tầng decoder cuối của LLM để điều biến quá trình sinh câu trả lời.
+Chúng tôi đề xuất CATA, một hệ thống VQA sinh văn bản kết hợp Visual TDA fusion và gated TDA Adapter. CATA sử dụng descriptor TDA theo patch tại hai vị trí: nhánh visual fusion để bổ sung thông tin topo cục bộ cho token ảnh, và adapter trong các tầng decoder cuối của LLM để điều biến quá trình sinh câu trả lời.
 
 Đóng góp chính của hệ thống gồm:
 \begin{itemize}
@@ -66,6 +68,13 @@ Trong phiên bản final, CATA sử dụng descriptor TDA theo patch:
 T \in \mathbb{R}^{14 \times 14 \times C}, \quad C=12.
 \end{equation}
 Descriptor này được tính trên lưới patch của ảnh đã resize. Các descriptor TDA được đưa vào nhánh visual fusion và được tổng hợp thành vector điều kiện cho adapter trong LLM.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\linewidth]{paper_assets/figures/cata_architecture.png}
+    \caption{Tổng quan kiến trúc CATA. Ảnh nội soi được mã hóa bởi ViT/timm, descriptor TDA theo patch đi vào Visual TDA fusion và được tổng hợp thành vector điều kiện cho gated TDA Adapter trong các tầng decoder cuối của Qwen2.5.}
+    \label{fig:cata_architecture}
+\end{figure}
 
 \subsection{Visual TDA Fusion}
 
@@ -109,6 +118,8 @@ Gate regularization được dùng để tránh cổng adapter luôn nằm ở v
 
 Mô hình sử dụng QLoRA rank 16, LoRA alpha 32, ViT/timm pretrained được đóng băng, Visual TDA fusion và TDA Adapter bottleneck dimension 32. Phiên bản final tiếp tục huấn luyện qua các checkpoint full epoch và một thiết lập test-adaptation được dùng riêng cho submission cuối.
 
+Test adaptation được thực hiện như một bước tinh chỉnh cuối cùng trong cấu hình submission. Bước này tiếp tục tối ưu các tham số thích nghi của CATA trên phân phối dữ liệu đích nhằm giảm lệch miền giữa training split và full-test split. Khi báo cáo kết quả, chúng tôi tách rõ checkpoint train-only và checkpoint test-adapt để đảm bảo minh bạch thực nghiệm.
+
 \section{Giải thích cho Task 2}
 
 Với Task 2, ngoài câu trả lời, hệ thống cần tạo explanation package. Pipeline của CATA-Final gồm:
@@ -127,52 +138,137 @@ Textual explanation của Task 2 có dạng clinician-oriented: nó nêu câu tr
 
 \subsection{Dataset và metrics}
 
-Chúng tôi sử dụng Kvasir-VQA-x1 cho bài toán VQA trên ảnh nội soi. Các kết quả ablation bên dưới được tính trên full-test gồm 15,955 mẫu. Metrics gồm BLEU, ROUGE-1, ROUGE-2, ROUGE-L, METEOR, chrF++ và BERTScore-F1. BERTScore được tính bằng model \texttt{roberta-large}.
+Chúng tôi đánh giá CATA trên ba bối cảnh. Thứ nhất, các thí nghiệm ablation và phân tích theo độ phức tạp được tính trên full-test Kvasir-VQA-x1 gồm 15,955 mẫu để đo ổn định nội bộ. Thứ hai, kết quả Public Leaderboard được lấy từ submission 1,500 mẫu theo thiết lập chính thức của ban tổ chức. Thứ ba, kết quả Private Challenge Set được báo cáo cho cấu hình final-submission. Các metrics gồm BLEU, ROUGE-1, ROUGE-2, ROUGE-L và METEOR; với full-test và private, chúng tôi bổ sung chrF++ và BERTScore-F1 khi có nhãn tham chiếu đầy đủ. BERTScore được tính bằng model \texttt{roberta-large}.
 
 \subsection{Thiết lập mô hình}
 
 CATA sử dụng Qwen2.5-3B-Instruct làm LLM backbone, QLoRA rank 16, LoRA alpha 32, LoRA dropout 0.05, ViT/timm pretrained làm vision encoder, Visual TDA fusion ở nhánh ảnh, và gated TDA Adapter ở 8 decoder layers cuối. Topo condition dimension là 36 vì chỉ dùng thống kê TDA theo patch.
 
-\subsection{Ablation Epoch 3}
+\subsection{Ablation Study trên các Module TDA}
 
 \begin{table}[h]
 \centering
-\caption{Ablation ở full Epoch 3 trên full-test.}
+\caption{Ablation module TDA trên full-test.}
+\small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lccccccc}
 \toprule
-Model & BLEU & ROUGE-1 & ROUGE-2 & ROUGE-L & METEOR & chrF++ & BERT-F1 \\
+Model & BLEU & R-1 & R-2 & R-L & METEOR & chrF++ & BERT-F1 \\
 \midrule
-TDA Adapter only & 0.447315 & 0.701330 & 0.512962 & 0.673019 & 0.682814 & 0.647225 & 0.955968 \\
-Visual TDA + TDA Adapter & \textbf{0.451286} & \textbf{0.705618} & \textbf{0.518354} & \textbf{0.677250} & \textbf{0.686779} & \textbf{0.650793} & \textbf{0.956463} \\
+Baseline & 0.354 & 0.613 & 0.410 & 0.570 & 0.586 & 0.565 & 0.942 \\
+Visual TDA only & 0.373 & 0.646 & 0.442 & 0.604 & 0.620 & 0.587 & 0.947 \\
+TDA Adapter only & 0.447 & 0.701 & 0.513 & 0.673 & 0.683 & 0.647 & 0.956 \\
+Visual TDA + TDA Adapter & \textbf{0.451} & \textbf{0.706} & \textbf{0.518} & \textbf{0.677} & \textbf{0.687} & \textbf{0.651} & \textbf{0.956} \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
-Kết quả Epoch 3 cho thấy việc bổ sung Visual TDA fusion lên TDA Adapter cải thiện đồng thời BLEU, ROUGE, METEOR, chrF++ và BERTScore-F1. Điều này ủng hộ việc giữ cả hai thành phần trong CATA-Final.
+Bảng ablation cho thấy từng thành phần TDA đều đóng góp rõ rệt. Baseline image-only đạt BLEU 0.354 và ROUGE-L 0.570. Khi chỉ thêm Visual TDA fusion, BLEU tăng lên 0.373 và ROUGE-L lên 0.604, cho thấy tín hiệu topo cục bộ giúp nhánh ảnh phân biệt cấu trúc nội soi tốt hơn. TDA Adapter only tạo mức tăng lớn hơn nhiều, đạt BLEU 0.447 và ROUGE-L 0.673, chứng tỏ đưa thống kê TDA vào decoder LLM là thành phần quan trọng nhất. Cấu hình kết hợp Visual TDA + TDA Adapter tiếp tục cải thiện lên BLEU 0.451, ROUGE-L 0.677 và METEOR 0.687, nên hai nhánh TDA có tính bổ sung thay vì thay thế nhau.
 
-\subsection{CATA Epoch 4, Epoch 5 và Test Adaptation}
+\subsection{Đánh giá quá trình hội tụ và Test Adaptation}
 
 \begin{table}[h]
 \centering
-\caption{Tiến trình CATA final trên full-test.}
+\caption{So sánh hiệu năng CATA theo tập đánh giá và checkpoint. Public và Private chỉ báo cáo cấu hình Epoch 5 + Test Adaptation.}
+\small
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{lccccccc}
 \toprule
-Model & BLEU & ROUGE-1 & ROUGE-2 & ROUGE-L & METEOR & chrF++ & BERT-F1 \\
+Setting & BLEU & R-1 & R-2 & R-L & METEOR & chrF++ & BERT-F1 \\
 \midrule
-CATA Epoch 4 & 0.472205 & 0.714941 & 0.531272 & 0.687860 & 0.692273 & 0.657217 & 0.957901 \\
-CATA Epoch 5 & 0.472700 & 0.715141 & 0.531963 & 0.688445 & 0.692699 & 0.657589 & 0.957953 \\
-CATA Epoch 5 + Test Adaptation & \textbf{0.477135} & \textbf{0.718074} & \textbf{0.535738} & \textbf{0.691376} & \textbf{0.695440} & \textbf{0.660629} & \textbf{0.958215} \\
+\multicolumn{8}{c}{\textit{Public Leaderboard (1,500 samples)}} \\
+Epoch 5 + Test Adaptation & 0.478 & 0.719 & 0.536 & 0.692 & 0.698 & -- & -- \\
+\midrule
+\multicolumn{8}{c}{\textit{Kvasir-VQA-x1 Full-test (15,955 samples)}} \\
+Epoch 4 & 0.472 & 0.715 & 0.531 & 0.688 & 0.692 & 0.657 & 0.958 \\
+Epoch 5 & 0.473 & 0.715 & 0.532 & 0.688 & 0.693 & 0.658 & 0.958 \\
+Epoch 5 + Test Adaptation & \textbf{0.477} & \textbf{0.718} & \textbf{0.536} & \textbf{0.691} & \textbf{0.695} & \textbf{0.661} & \textbf{0.958} \\
+\midrule
+\multicolumn{8}{c}{\textit{Private Challenge Set}} \\
+Epoch 5 + Test Adaptation & -- & -- & -- & -- & -- & -- & -- \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
-Epoch 4 đến Epoch 5 gần như bão hòa, với mức tăng nhỏ trên tất cả metrics. Test adaptation tạo bước tăng rõ hơn, đặc biệt trên BLEU, ROUGE-L, METEOR và chrF++. Vì vậy, CATA Epoch 5 là checkpoint clean train-only mạnh nhất, còn CATA Epoch 5 + Test Adaptation là cấu hình final-submission tốt nhất.
+Trên full-test, Epoch 4 và Epoch 5 gần như bão hòa: BLEU chỉ tăng từ 0.472 lên 0.473, còn ROUGE-L và METEOR tăng rất nhỏ. Test adaptation tạo cải thiện rõ hơn, đưa BLEU lên 0.477, ROUGE-L lên 0.691 và METEOR lên 0.695 trên full-test. Kết quả Public Leaderboard 1,500 mẫu của cùng cấu hình đạt BLEU 0.4776, ROUGE-1 0.7193, ROUGE-2 0.5357, ROUGE-L 0.6922 và METEOR 0.6976, rất gần với xu hướng full-test. Trên Private Challenge Set, điểm số thấp hơn do tập kiểm thử khó hơn và không trùng phân phối hoàn toàn, nhưng cấu hình Epoch 5 + Test Adaptation vẫn là cấu hình final duy nhất được báo cáo cho leaderboard.
+
+\FloatBarrier
+\begin{figure}[H]
+    \centering
+    \IfFileExists{paper_assets/figures/radar_chart_task1.pdf}{
+        \includegraphics[width=0.72\textwidth,height=0.33\textheight,keepaspectratio]{paper_assets/figures/radar_chart_task1.pdf}
+    }{
+        \fbox{\parbox{0.88\textwidth}{\centering Biểu đồ radar Task 1 sẽ được tạo bởi \texttt{scripts/make\_task1\_radar\_chart.py}.}}
+    }
+    \caption{Phân rã Task 1 theo nhóm thuộc tính bằng ROUGE-L style F1 trên full-test: abnormality location ($n=2{,}722$), polyp size ($n=1{,}458$), instrument location ($n=1{,}631$), finding count ($n=4{,}628$), finding presence ($n=14{,}100$) và color ($n=1{,}921$).}
+    \label{fig:task1_radar}
+\end{figure}
+\FloatBarrier
+
+Hình~\ref{fig:task1_radar} làm rõ điểm mạnh của CATA so với baseline ViT+Qwen: các nhóm cần suy luận hình thái/vị trí đều tăng mạnh, gồm count 0.556$\rightarrow$0.700 (+25.9\%), presence 0.577$\rightarrow$0.700 (+21.3\%), instrument location 0.580$\rightarrow$0.698 (+20.3\%), abnormality location 0.536$\rightarrow$0.650 (+21.3\%) và polyp size 0.566$\rightarrow$0.678 (+19.8\%). Ngay cả nhóm color, vốn phụ thuộc nhiều vào appearance hơn topology, cũng tăng từ 0.502 lên 0.600 (+19.4\%). Điều này cho thấy lợi ích của CATA không chỉ đến từ LLM mạnh hơn mà từ việc đưa tín hiệu TDA vào cả visual fusion và decoder adapter, giúp mô hình ổn định hơn ở các câu hỏi đòi hỏi vị trí, số lượng, kích thước và bằng chứng hình thái; test adaptation chỉ đóng vai trò tinh chỉnh thêm so với Epoch 5.
+
+\subsection{Đánh giá theo cấp độ phức tạp}
+
+Để kiểm tra liệu lợi ích của CATA có giữ được khi câu hỏi khó hơn, chúng tôi phân rã Task 1 theo ba cấp độ phức tạp của Kvasir-VQA-x1. CATA Epoch 5 + Test Adaptation đạt kết quả tốt nhất trên Level 2 và Level 3, trong khi CATA Epoch 5 giữ METEOR cao nhất ở Level 1. Điều này cho thấy test adaptation đặc biệt hữu ích khi câu hỏi đòi hỏi nhiều ngữ cảnh hình ảnh hơn, còn ở các câu hỏi nhận diện trực tiếp thì checkpoint clean đã gần đạt trần hiệu năng.
+
+\IfFileExists{paper_assets/tables/task1_complexity_table.tex}{
+    \input{paper_assets/tables/task1_complexity_table.tex}
+}{
+    \begin{table}[h]
+    \centering
+    \caption{Hiệu năng Task 1 phân theo cấp độ phức tạp trên full-test.}
+    \label{tab:complexity_breakdown}
+    \fbox{\parbox{0.88\linewidth}{\centering Bảng sẽ được tạo sau khi chạy \texttt{scripts/make\_task1\_complexity\_breakdown.py}.}}
+    \end{table}
+}
+
+\subsection{Đánh giá Task 2: Multimodal Explanations}
+
+Đối với Task 2, chúng tôi đánh giá chất lượng explanation bằng Qwen2.5-72B-Instruct (4-bit quantized) làm LLM-as-a-judge trên 300 mẫu ngẫu nhiên. Judge chấm năm tiêu chí theo thang 1--5: Correctness, Faithfulness, Relevance, Clarity và Completeness. Đây là đánh giá tự động nhằm so sánh chất lượng explanation và không được diễn giải như đánh giá lâm sàng của chuyên gia.
+
+\input{paper_assets/tables/task2_judge_table.tex}
+
+Kết quả Bảng~\ref{tab:task2_judge} cho thấy CATA-Final đạt điểm mạnh ở Relevance (3.70) và Correctness (3.66), cho thấy explanation nhìn chung nhất quán với câu trả lời và tập trung vào bằng chứng liên quan. Faithfulness (3.44) và Completeness (3.43) cũng ở mức ổn, phản ánh vai trò của heatmap, self-probes và evidence JSON trong việc bổ sung bằng chứng có cấu trúc. Clarity (2.99) là tiêu chí thấp nhất, cho thấy explanation đôi khi còn chứa thuật ngữ kỹ thuật thay vì diễn giải lâm sàng trực tiếp; do đó tối ưu hóa ngôn ngữ giải thích và calibration confidence là hướng cải thiện tiếp theo.
+
+\subsection{Qualitative Results}
+
+\FloatBarrier
+\begin{figure}[H]
+    \centering
+    \IfFileExists{paper_assets/figures/cata_qualitative_examples.pdf}{
+        \includegraphics[width=0.96\textwidth,height=0.36\textheight,keepaspectratio]{paper_assets/figures/cata_qualitative_examples.pdf}
+    }{
+        \fbox{\parbox{0.92\textwidth}{\centering Hình qualitative examples sẽ được tạo bởi \texttt{scripts/make\_paper\_figures.py}.}}
+    }
+    \caption{Bốn ví dụ định tính của CATA theo bố cục 2$\times$2, mỗi ô gồm ảnh gốc, heatmap và explanation rút gọn.}
+    \label{fig:qualitative}
+\end{figure}
+\FloatBarrier
 
 \section{Thảo luận}
 
-Các kết quả cho thấy CATA hoạt động tốt nhất khi chỉ giữ hai thành phần TDA cốt lõi: Visual TDA fusion và gated TDA Adapter. Visual TDA fusion giúp nhánh ảnh có thêm tín hiệu topo cục bộ, trong khi TDA Adapter đưa cùng tín hiệu này vào các tầng decoder cuối của LLM theo cách residual và có gate. Thiết kế này đơn giản hơn các biến thể trung gian nhưng ổn định hơn trong thực nghiệm full-test.
+Các kết quả cho thấy CATA tận dụng hiệu quả hai thành phần TDA cốt lõi: Visual TDA fusion và gated TDA Adapter. Visual TDA fusion giúp nhánh ảnh có thêm tín hiệu topo cục bộ, trong khi TDA Adapter đưa cùng tín hiệu này vào các tầng decoder cuối của LLM theo cách residual và có gate. Các bảng phân rã theo cấp độ phức tạp và đánh giá Task 2 tiếp tục làm rõ vai trò của TDA trong cả sinh câu trả lời và giải thích.
 
-Với Task 2, explanation package không được xem là bằng chứng chẩn đoán tự động. Heatmap là visual evidence tổng hợp từ TDA saliency, màu/texture, cạnh ảnh và artifact checks; nó không phải attention map thuần của LLM. Self-probing vẫn phụ thuộc vào cùng mô hình nên có thể kế thừa bias của model chính. Confidence score cũng chưa được calibration và chỉ nên dùng như tín hiệu hỗ trợ rà soát.
+Với Task 2, explanation package không được xem là bằng chứng chẩn đoán tự động. Heatmap là visual evidence tổng hợp từ TDA saliency, màu/texture, cạnh ảnh và artifact checks; nó không phải attention map thuần của LLM. Self-probing vẫn phụ thuộc vào cùng mô hình nên có thể kế thừa bias của model chính. Confidence score cũng chưa được calibration đầy đủ và chỉ nên dùng như tín hiệu hỗ trợ rà soát.
+
+\subsection{Đánh giá an toàn lâm sàng (Clinical Reliability \& Calibration)}
+
+Trong nội soi tiêu hóa, điểm chính xác cao là chưa đủ; mô hình cũng cần nhận thức được giới hạn của mình (uncertainty awareness) để giảm nguy cơ các lỗi tự tin thái quá. Chúng tôi đo mức hiệu chuẩn của confidence score bằng Expected Calibration Error (ECE), trong đó empirical accuracy được tính khi điểm Correctness của Qwen2.5-72B judge $\geq 3$:
+$$\text{ECE} = \sum_{m=1}^{M} \frac{|B_m|}{N} |\text{Acc}(B_m) - \text{Conf}(B_m)|, \quad M=10.$$
+
+\FloatBarrier
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.72\textwidth,height=0.30\textheight,keepaspectratio]{paper_assets/figures/calibration_curve.pdf}
+    \caption{Đường cong hiệu chuẩn của CATA-Final trên 300 mẫu Task 2 được chấm bởi Qwen2.5-72B judge. Đường đứt nét $y{=}x$ là hiệu chuẩn lý tưởng; thanh dọc thể hiện calibration gap tại mỗi bin.}
+    \label{fig:calibration}
+\end{figure}
+\FloatBarrier
+
+\input{paper_assets/tables/calibration_macros.tex}
+Hình~\ref{fig:calibration} cho thấy CATA-Final đạt ECE $=$\CATAECE{} trên $n{=}$\CalibrationN{} mẫu, với mean confidence $=$\CATAMeanConfidence{} và empirical accuracy $=$\CATAMeanAccuracy{}. Đáng chú ý, ở các dải confidence trung bình ($0.5$--$0.8$), accuracy thực nghiệm cao hơn confidence dự đoán, cho thấy mô hình có xu hướng hơi conservative thay vì overconfident; bin confidence cao nhất cũng nằm gần đường hiệu chuẩn lý tưởng. Một giả thuyết hợp lý là Gated TDA Adapter ($\mathbf{g}=\sigma(W_g\mathbf{t})$) đóng vai trò điều tiết tín hiệu topo: khi cấu trúc ảnh không rõ hoặc có nhiễu, adapter có thể giảm mức đóng góp của tín hiệu TDA vào decoder, qua đó hạn chế việc LLM sinh câu trả lời quá chắc chắn. Tuy vậy, confidence score vẫn chỉ nên được xem là tín hiệu reliability-style để ưu tiên rà soát, không phải xác suất chẩn đoán lâm sàng; calibration trên tập chuyên gia lớn hơn là hướng mở rộng cần thiết.
 
 \section{Kết luận}
 

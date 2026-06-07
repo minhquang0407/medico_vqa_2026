@@ -1,115 +1,96 @@
-# CATA Multitask Final Submission
+# CATA-Final for MediaEval Medico VQA 2026
 
-This folder is the combined Hugging Face submission package for **MediaEval
-Medico VQA 2026**.
+This repository contains the final Hugging Face submission package for **MediaEval Medico VQA 2026**.
 
-It contains:
+- **Team:** Sweet&Sour
+- **Participant:** Minh Quang Nguyen
+- **Country:** Vietnam
+- **Contact:** nmquang04072005@gmail.com
 
-- **Subtask 1:** generative GI visual question answering,
-- **Subtask 2:** answer-aligned visual/textual explanations.
+## Summary
 
-The submitted model is **CATA-Final**:
+**CATA** (*Clinical-Aware Topological Adaptation*) is a generative medical VQA system for gastrointestinal endoscopy images. The final submitted model uses a frozen visual encoder, a Qwen language model, and patch-level topological descriptors to improve answers that require morphology, location, count, size, and visual evidence.
+
+The same model family is used for both tasks:
+
+- **Task 1:** answer generation for GI visual question answering.
+- **Task 2:** multimodal explanation package generation, including text explanations, targeted self-probes, heatmaps, evidence JSON files, and reliability-style confidence scores.
+
+## Model Architecture
+
+The submitted checkpoint is **CATA-Final / Epoch 5 + Test Adaptation**.
 
 ```text
-Qwen2.5-3B-Instruct + QLoRA r=16 alpha=32
-+ frozen pretrained ViT/timm image encoder
-+ Visual TDA fusion
-+ gated TDA Adapter in the last 8 Qwen decoder layers
-+ topo_mode=tda_only
-+ topo_dim=36
-+ vision_pretrained=True
+CATA-Final
+├── Visual encoder: pretrained frozen ViT/timm backbone
+├── Language model: Qwen2.5-3B-Instruct
+├── Parameter-efficient tuning: QLoRA, r=16, alpha=32, dropout=0.05
+├── Visual TDA fusion: patch-level TDA descriptors fused into visual features
+├── Decoder adaptation: gated TDA TopoAdapter in the last 8 Qwen decoder layers
+└── TDA condition vector: 36 dimensions from patch-level mean/std/max statistics
 ```
 
----
+Important implementation notes:
 
-## Team Information
+- `vision_pretrained=True` is enabled.
+- LoRA targets are `q_proj` and `v_proj`.
+- The selected CATA configuration uses **Visual TDA fusion + gated TDA Adapter**.
+- OT routing, prior-guided OT fusion, prior-alignment loss, and global structural token are disabled in the final submission model.
+- The lesion-prior tensor may still be produced by the common data pipeline, but it is not routed into the selected CATA-Final model path.
 
-| Field | Value |
-|---|---|
-| Team | Sweet&Sour |
-| Member | Minh Quang Nguyen |
-| Email | 23110203@student.hcmus.edu.vn |
-| Institution | University of Science, VNU-HCM |
-| Country | Vietnam |
+## Reported Scores
 
----
+### Official 1,500-sample public submission
 
-## Folder Layout
+| Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | METEOR |
+|---|---:|---:|---:|---:|---:|
+| CATA-Final, Epoch 5 + Test Adaptation | **0.4776** | **0.7193** | **0.5357** | **0.6922** | **0.6976** |
+
+### Full-test internal evaluation
+
+The paper also reports internal full-test evaluation on 15,955 Kvasir-VQA-x1 test samples. In those experiments, all configurations use the same 90% train / 10% validation split and the same seed for fair comparison.
+
+| Model | BLEU | ROUGE-1 | ROUGE-2 | ROUGE-L | METEOR | chrF++ | BERTScore-F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Baseline, ViT + Qwen | 0.354 | 0.613 | 0.410 | 0.570 | 0.586 | 0.565 | 0.942 |
+| Visual TDA only | 0.373 | 0.646 | 0.442 | 0.604 | 0.620 | 0.587 | 0.947 |
+| TDA Adapter only | 0.447 | 0.701 | 0.513 | 0.673 | 0.683 | 0.647 | 0.956 |
+| Visual TDA + TDA Adapter | **0.451** | **0.706** | **0.518** | **0.677** | **0.687** | **0.651** | **0.956** |
+
+For the final checkpoint sequence, Epoch 5 + Test Adaptation reaches BLEU 0.477, ROUGE-L 0.691, METEOR 0.695, chrF++ 0.661, and BERTScore-F1 0.958 on full-test.
+
+> The leaderboard score and the full-test internal score are reported on different evaluation subsets and should not be treated as identical protocols.
+
+## Repository Layout
 
 ```text
 cata_multitask_final/
 ├── README.md
 ├── requirements.txt
-├── submission_task1.py
-├── submission_task2.py
-├── generate_task2_cata_final.py
-├── generate_task2_from_predictions.py
-├── validate_task2_submission.py
-├── submission_task2_cata_final.jsonl
-├── visuals/
+├── submission_task1.py              # Task 1 inference script
+├── submission_task2.py              # Task 2 metadata for organizers
+├── generate_task2_cata_final.py     # Regenerates Task 2 JSONL + visual evidence
+├── validate_task2_submission.py     # Validates Task 2 JSONL format and paths
+├── submission_task2.jsonl           # Submitted Task 2 explanation file
+├── visuals/                         # Heatmaps and evidence JSON files
 ├── checkpoints/
-│   └── last.pt
-└── src/
+│   └── last.pt                      # CATA-Final checkpoint
+└── src/                             # Model, topology, data, and runtime code
 ```
-
-### Main Files
-
-| File | Purpose |
-|---|---|
-| `submission_task1.py` | Loads the checkpoint and runs Task 1 inference/evaluation. |
-| `submission_task2.py` | Lightweight metadata entrypoint for Task 2. |
-| `generate_task2_cata_final.py` | Fresh Task 2 generation with checkpoint loading, self-probes, heatmaps, evidence JSON, explanations, and confidence. |
-| `generate_task2_from_predictions.py` | Fast Task 2 generation from cached full-test Task 1 predictions. |
-| `validate_task2_submission.py` | Validates Task 2 JSONL schema and visual/evidence paths. |
-| `submission_task2_cata_final.jsonl` | Packaged Task 2 output. |
-| `visuals/` | Heatmap PNGs and evidence JSON files used by Task 2. |
-| `checkpoints/last.pt` | Active CATA-Final checkpoint. |
-
----
 
 ## Installation
 
-From this folder:
+A GPU environment is recommended. From this repository folder:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Recommended environment:
+If using a clean environment, install PyTorch according to the local CUDA version before running the submission scripts.
 
-- Python 3.10 or newer,
-- CUDA GPU for Task 1 and fresh Task 2 generation,
-- CPU is acceptable for validation and the fast Task 2 path, but heatmap creation
-  can still take time.
+## Task 1: Generate Answers
 
----
-
-## Model Configuration
-
-The submission model uses TDA-only conditioning:
-
-```text
-topo_mode=tda_only
-topo_dim=36
-use_patch_topo_loss=True
-vision_pretrained=True
-```
-
-The public description of the model is:
-
-```text
-CATA-Final = frozen ViT/timm image encoder
-           + Qwen2.5-3B-Instruct with QLoRA
-           + Visual TDA fusion
-           + gated TDA Adapter
-           + patch-level TDA descriptors
-```
-
----
-
-## Subtask 1: VQA Inference
-
-Run Task 1 from this folder:
+Run from the repository root:
 
 ```bash
 python submission_task1.py
@@ -127,18 +108,47 @@ and writes:
 predictions_1.json
 ```
 
-Expected diagnostic lines include:
+Expected runtime diagnostics include messages similar to:
 
 ```text
-topo_mode=tda_only topo_dim=36
-Installed 8 TopoAdapters / 36 decoder layers
+Runtime config: patch_tda_dim=12 tda_condition_dim=36 vision_pretrained=True use_patch_tda=True
+Installed 8 TopoAdapters / 36 decoder layers | hidden=2048 condition_dim=36
+Loaded checkpoint successfully. Status: OK
 ```
 
----
+## Task 2: Generate Multimodal Explanations
 
-## Subtask 2 Dataset Definition
+The repository already contains the submitted Task 2 file:
 
-Task 2 uses the organizer-defined public subset:
+```text
+submission_task2.jsonl
+```
+
+To regenerate Task 2 outputs, run:
+
+```bash
+python generate_task2_cata_final.py \
+  --checkpoint checkpoints/last.pt \
+  --output-jsonl submission_task2.jsonl \
+  --visual-dir visuals \
+  --batch-size 4 \
+  --overwrite-visuals true
+```
+
+For a quick smoke test:
+
+```bash
+python generate_task2_cata_final.py \
+  --checkpoint checkpoints/last.pt \
+  --output-jsonl debug_task2.jsonl \
+  --visual-dir visuals_debug \
+  --limit 2 \
+  --batch-size 1
+```
+
+If VRAM is limited, use `--batch-size 1`.
+
+Task 2 uses the organizer-defined validation subset:
 
 ```python
 from datasets import Image as HfImage, load_dataset
@@ -154,89 +164,27 @@ val_set_task2 = (
 )
 ```
 
-Both Task 2 generators use this same ordering.
+Each generated Task 2 row contains:
 
----
+- `val_id`
+- `img_id`
+- `question`
+- `answer`
+- `textual_explanation`
+- `visual_explanation`
+- `confidence_score`
 
-## Subtask 2: Fresh Generation Path
+The generator also writes heatmaps and structured evidence files under `visuals/`.
 
-Use this path when you want to regenerate everything from the checkpoint.
+## Validate Task 2 Submission
 
-Smoke test:
-
-```bash
-python generate_task2_cata_final.py \
-  --output-jsonl debug_task2.jsonl \
-  --visual-dir visuals_debug \
-  --limit 2 \
-  --batch-size 1
-```
-
-Full generation:
-
-```bash
-python generate_task2_cata_final.py \
-  --output-jsonl submission_task2.jsonl \
-  --visual-dir visuals \
-  --batch-size 4 \
-  --overwrite-visuals true
-```
-
-If VRAM is limited, use:
-
-```bash
---batch-size 1
-```
-
-The fresh generator creates:
-
-- primary CATA-Final answers,
-- targeted self-probe answers,
-- heatmap PNG files,
-- evidence JSON files,
-- clinician-oriented textual explanations,
-- reliability-style confidence scores.
-
----
-
-## Subtask 2: Fast Path from Cached Predictions
-
-Use this path when full-test Task 1 predictions are already available. It avoids
-loading Qwen/CATA and is much faster.
-
-Example:
-
-```bash
-python generate_task2_from_predictions.py \
-  --predictions ../../outputs/eval/CATA_Epoch5_TestAdapt/eval/predictions.jsonl \
-  --output-jsonl submission_task2.jsonl \
-  --visual-dir visuals \
-  --overwrite-visuals true
-```
-
-The fast path:
-
-- loads the same Task 2 subset and order,
-- maps each Task 2 example to a cached full-test prediction,
-- regenerates heatmap PNGs and evidence JSON files,
-- writes deterministic textual explanations,
-- writes reliability-style confidence scores.
-
-Important limitation: the fast path does **not** rerun Qwen/CATA inference and
-does **not** run targeted self-probing. Use the fresh path when self-probe answers
-must be regenerated from the model.
-
----
-
-## Validate Task 2 Output
-
-Validate the generated JSONL:
+Validate the final JSONL file:
 
 ```bash
 python validate_task2_submission.py --submission submission_task2.jsonl
 ```
 
-For a local-only schema/path check without loading the Hugging Face dataset:
+For a local structural/path check without loading the Hugging Face dataset:
 
 ```bash
 python validate_task2_submission.py \
@@ -244,8 +192,7 @@ python validate_task2_submission.py \
   --skip-dataset-check
 ```
 
-If Task 1 predictions are available, check consistency between Task 1 and Task 2
-answers:
+If `predictions_1.json` is available, answer consistency can also be checked:
 
 ```bash
 python validate_task2_submission.py \
@@ -253,67 +200,39 @@ python validate_task2_submission.py \
   --task1-predictions predictions_1.json
 ```
 
----
+## Output Example
 
-## Task 2 JSONL Format
-
-Each row follows this structure:
+A Task 2 JSONL row has the following structure:
 
 ```json
 {
   "val_id": "0",
   "img_id": "...",
   "question": "...",
-  "answer": "CATA-Final answer",
-  "textual_explanation": "Clinician-oriented explanation text.",
+  "answer": "CATA-Final prediction",
+  "textual_explanation": "Clinician-oriented explanation based on the answer, visual evidence, and self-probes.",
   "visual_explanation": [
     {
       "type": "heatmap",
       "data": "visuals/0000_heatmap.png",
-      "description": "CATA-Final heatmap overlay."
-    },
-    {
-      "type": "evidence_json",
-      "data": "visuals/0000_evidence.json",
-      "description": "Structured evidence statistics."
+      "description": "CATA heatmap highlighting visually relevant regions."
     }
   ],
   "confidence_score": 0.67
 }
 ```
 
-The confidence score is a reliability-style estimate. It is not a calibrated
-clinical probability.
+## Intended Use and Limitations
 
----
+CATA is intended for the MediaEval Medico VQA 2026 benchmark and research on endoscopy VQA/explainability. The Task 2 explanation package is designed to support review and error analysis.
 
-## Packaged Output
+Important limitations:
 
-The packaged Task 2 file is:
+- The heatmap is a visual evidence map combining TDA saliency, color/texture, edge cues, and artifact checks; it is not a pure LLM attention map.
+- Targeted self-probes are generated by the same model family and can inherit model bias.
+- The confidence score is a reliability-style heuristic, not a calibrated clinical probability.
+- Outputs are not medical advice and must not replace clinician judgment.
 
-```text
-submission_task2_cata_final.jsonl
-```
+## Citation
 
-If a generated file is named `submission_task2.jsonl`, it can be copied or renamed
-according to the required submission format.
-
----
-
-## Reporting Names
-
-Use these names in the paper and report:
-
-- `TDA Adapter only`
-- `Visual TDA + TDA Adapter`
-- `CATA Epoch 4`
-- `CATA Epoch 5`
-- `CATA Epoch 5 + Test Adaptation`
-
----
-
-## Clinical Disclaimer
-
-This package is for research evaluation. Generated answers, explanations,
-heatmaps, evidence JSON files, and confidence scores are intended to support
-human review only and must not be used as standalone clinical decisions.
+If you use this repository, please cite the accompanying CATA MediaEval Medico VQA 2026 working notes once available.

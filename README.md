@@ -105,7 +105,7 @@ The full-test evaluation uses 15,955 examples and paper-level metrics from
 | CATA Epoch 3 | 0.472700 | 0.715141 | 0.531963 | 0.688445 | 0.692699 | 0.657589 | 0.957953 |
 | CATA Epoch 3 + Test Adaptation | **0.477135** | **0.718074** | **0.535738** | **0.691376** | **0.695440** | **0.660629** | **0.958215** |
 
-`CATA Epoch 5` is the strongest clean train-only checkpoint. `CATA Epoch 5 + Test
+`CATA Epoch 3` is the strongest clean train-only checkpoint. `CATA Epoch 3 + Test
 Adaptation` is the final submission configuration.
 
 ---
@@ -235,9 +235,9 @@ Use the following names in tables and text:
 
 - `TDA Adapter only`
 - `Visual TDA + TDA Adapter`
-- `CATA Epoch 4`
-- `CATA Epoch 5`
-- `CATA Epoch 5 + Test Adaptation`
+- `CATA Epoch 2`
+- `CATA Epoch 3`
+- `CATA Epoch 3 + Test Adaptation`
 
 ---
 
