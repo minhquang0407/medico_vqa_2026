@@ -35,7 +35,7 @@ import argparse
 import hashlib
 import json
 import sys
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -136,40 +136,67 @@ class CubicalTDAMedicoVQADataset(BaseMedicoVQADataset):
             )
         return self._extractor
 
+    def _cache_image_name(self, image_path: str | Path) -> str:
+        """Return a platform-stable image filename for cache keys.
+
+        JSONL files may contain Windows paths while Colab resolves the same image
+        under ``/content``. Hashing absolute paths makes identical images produce
+        different cache names across machines, so cache keys use only the image
+        basename plus the extraction configuration.
+        """
+        return Path(PureWindowsPath(str(image_path)).name).name.lower()
+
     def _cache_path_for(self, image_path: str | Path) -> Path:
-        image_path = Path(image_path)
-        try:
-            resolved = image_path.resolve()
-        except OSError:
-            resolved = image_path
+        image_name = self._cache_image_name(image_path)
         key_payload = {
-            "path": str(resolved).replace("\\", "/").lower(),
+            "image_name": image_name,
             "image_size": tuple(self.image_size),
             "grid_size": tuple(self.grid_size),
             "scalar_mode": self.cubical_settings["scalar_mode"],
             "backend": self.cubical_settings["backend"],
             "min_persistence": float(self.cubical_settings["min_persistence"]),
             "normalize_features": bool(self.cubical_settings["normalize_features"]),
-            "feature_version": 1,
+            "feature_version": 2,
         }
         digest = hashlib.sha1(json.dumps(key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-        stem = image_path.stem or "image"
+        stem = Path(image_name).stem or "image"
         mode = str(self.cubical_settings["scalar_mode"])
         return self._cache_dir / mode / f"{stem}_{digest}.npz"
 
+    def _cache_candidates_for(self, image_path: str | Path, primary_path: Path) -> List[Path]:
+        """Return primary cache path plus legacy basename matches.
+
+        Legacy caches created before feature_version=2 were path-hashed, so the
+        digest differs between Windows and Colab. The stem is still the image
+        basename; if the new portable key is absent, load an existing
+        ``<stem>_*.npz`` file from the same scalar-mode directory.
+        """
+        candidates = [primary_path]
+        stem = Path(self._cache_image_name(image_path)).stem or "image"
+        if primary_path.parent.exists():
+            for candidate in sorted(primary_path.parent.glob(f"{stem}_*.npz")):
+                if candidate != primary_path and candidate.is_file():
+                    candidates.append(candidate)
+        return candidates
+
+    def _read_cache_file(self, cache_path: Path) -> Dict[str, Any]:
+        with np.load(cache_path, allow_pickle=True) as data:
+            return {
+                "topo_mask": data["topo_mask"].astype(np.float32),
+                "topo_features": data["topo_features"].astype(np.float32),
+                "global_features": data["global_features"].astype(np.float32),
+                "feature_names": tuple(str(x) for x in data["feature_names"].tolist()),
+                "global_feature_names": tuple(str(x) for x in data["global_feature_names"].tolist()),
+                "backend": str(data["backend"].item()) if "backend" in data else self.cubical_settings["backend"],
+                "scalar_mode": str(data["scalar_mode"].item()) if "scalar_mode" in data else self.cubical_settings["scalar_mode"],
+            }
+
     def _load_or_compute_cubical(self, image_path: str | Path) -> Tuple[Dict[str, Any], Path | None]:
         cache_path = self._cache_path_for(image_path)
-        if self.cubical_settings["use_cache"] and cache_path.exists():
-            with np.load(cache_path, allow_pickle=True) as data:
-                return {
-                    "topo_mask": data["topo_mask"].astype(np.float32),
-                    "topo_features": data["topo_features"].astype(np.float32),
-                    "global_features": data["global_features"].astype(np.float32),
-                    "feature_names": tuple(str(x) for x in data["feature_names"].tolist()),
-                    "global_feature_names": tuple(str(x) for x in data["global_feature_names"].tolist()),
-                    "backend": str(data["backend"].item()) if "backend" in data else self.cubical_settings["backend"],
-                    "scalar_mode": str(data["scalar_mode"].item()) if "scalar_mode" in data else self.cubical_settings["scalar_mode"],
-                }, cache_path
+        if self.cubical_settings["use_cache"]:
+            for candidate in self._cache_candidates_for(image_path, cache_path):
+                if candidate.exists():
+                    return self._read_cache_file(candidate), candidate
 
         if self.cubical_settings["require_cache"]:
             raise FileNotFoundError(

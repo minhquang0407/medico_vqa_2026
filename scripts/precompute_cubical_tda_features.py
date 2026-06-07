@@ -106,25 +106,25 @@ def cache_path_for(
     min_persistence: float,
     normalize_features: bool,
 ) -> Path:
-    """Return the same cache path used by the Cubical-TDA training wrapper."""
-    image_path = Path(image_path)
-    try:
-        resolved = image_path.resolve()
-    except OSError:
-        resolved = image_path
+    """Return a platform-stable cache path for a Cubical-TDA feature file.
 
+    The same JSONL often runs on Windows for precompute and Colab/Linux for
+    training. Hashing absolute paths would produce different cache filenames for
+    identical images, so the key uses the image basename and extractor settings.
+    """
+    image_name = path_basename_any(image_path).lower()
     key_payload = {
-        "path": str(resolved).replace("\\", "/").lower(),
+        "image_name": image_name,
         "image_size": tuple(image_size),
         "grid_size": tuple(grid_size),
         "scalar_mode": scalar_mode,
         "backend": backend,
         "min_persistence": float(min_persistence),
         "normalize_features": bool(normalize_features),
-        "feature_version": 1,
+        "feature_version": 2,
     }
     digest = hashlib.sha1(json.dumps(key_payload, sort_keys=True).encode("utf-8")).hexdigest()[:16]
-    stem = image_path.stem or "image"
+    stem = Path(image_name).stem or "image"
     return Path(output_dir) / scalar_mode / f"{stem}_{digest}.npz"
 
 
